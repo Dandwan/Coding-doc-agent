@@ -19,16 +19,23 @@ class DocPathSettings(BaseModel):
     agent_doc_dir: str = "docs/agent"
 
 
+class WorkflowSettings(BaseModel):
+    proactive_push_enabled_default: bool = False
+    proactive_push_branch_default: str = ""
+
+
 class AppConfig(BaseModel):
     projects_root: str
     api: APISettings
     doc_paths: DocPathSettings
+    workflow: WorkflowSettings
 
 
 class AppConfigUpdate(BaseModel):
     projects_root: Optional[str] = None
     api: Optional[dict[str, Any]] = None
     doc_paths: Optional[dict[str, Any]] = None
+    workflow: Optional[dict[str, Any]] = None
 
 
 class ProjectCreateRequest(BaseModel):
@@ -40,6 +47,9 @@ class ProjectUpdateRequest(BaseModel):
     name: Optional[str] = None
     folder: Optional[str] = None
     project_doc_path: Optional[str] = None
+    proactive_push_use_global: Optional[bool] = None
+    proactive_push_enabled: Optional[bool] = None
+    proactive_push_branch: Optional[str] = None
 
 
 class ProjectSummary(BaseModel):
@@ -62,6 +72,12 @@ class ProjectDetail(ProjectSummary):
     last_opened_at: str
     project_doc_path: str
     project_doc_exists: bool
+    root_agent_doc_path: str
+    proactive_push_enabled: bool
+    proactive_push_branch: str
+    proactive_push_use_global: bool
+    proactive_push_enabled_override: Optional[bool] = None
+    proactive_push_branch_override: Optional[str] = None
     sessions: list[SessionSummary]
 
 

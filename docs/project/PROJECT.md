@@ -17,6 +17,7 @@ DocAgent 是一个面向需求澄清与开发文档生成的 Web 工具，采用
 
 - 全局配置管理
   - 管理 projects_root、API 参数、文档路径规则
+  - 管理 workflow 默认策略（积极上传开关与默认分支）
   - 配置持久化到 ~/.docagent/config.json
   - 项目索引持久化到 ~/.docagent/projects.json
 
@@ -30,12 +31,19 @@ DocAgent 是一个面向需求澄清与开发文档生成的 Web 工具，采用
   - 动态“其他/补充”输入标签
   - 跳过问题按钮
   - 至少选择或输入后才能提交
+  - 已完成后仍可继续新增需求，系统重新核实并更新文档
 
 - 文档生成与版本管理
   - 每次提交答案后自动生成版本
   - 保存命名为 YYYY-MM-DD_HHMMSS[_NN]_DEVELOPMENT.md
-  - 同步维护 DEVELOPMENT.md 最新版
+  - 同步维护 docs 版本目录中的 DEVELOPMENT.md 最新版
+  - 同步维护项目根目录 AGENT_DEVELOPMENT.md（便于直接给开发 Agent 读取）
   - 支持历史版本查看、恢复、与最新版对比 diff
+
+- 积极上传策略
+  - 支持全局默认值配置
+  - 支持项目级覆盖开关
+  - 支持项目级分支配置：有分支则强调上传到该分支，无分支则不强调
 
 - 项目开发文档容错读取
   - 缺失时不阻塞会话流程
@@ -95,6 +103,8 @@ DocAgent 是一个面向需求澄清与开发文档生成的 Web 工具，采用
   - api.url/api_key/model/temperature/timeout/max_retries
   - doc_paths.project_doc
   - doc_paths.agent_doc_dir
+  - workflow.proactive_push_enabled_default
+  - workflow.proactive_push_branch_default
 
 ## 6. 部署与运行
 
@@ -114,7 +124,10 @@ DocAgent 是一个面向需求澄清与开发文档生成的 Web 工具，采用
   - 配置读写
   - 项目创建与已有文件保护
   - 项目开发文档存在标志
+  - 目录选择接口
   - 会话回答、版本生成、版本对比与恢复
+  - 积极上传默认/项目覆盖
+  - 完成后新增需求重开核实
 
 - 测试命令：
   - conda run -n Coding-doc-agent python -m pytest -q

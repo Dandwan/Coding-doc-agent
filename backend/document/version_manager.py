@@ -10,7 +10,10 @@ from backend.utils.file_utils import ensure_dir, read_text, resolve_in_project, 
 class VersionManager:
     def __init__(self, project_folder: str | Path, agent_doc_dir: str) -> None:
         root = Path(project_folder).expanduser().resolve()
+        self.project_root = root
         self.version_dir = ensure_dir(resolve_in_project(root, agent_doc_dir))
+        self.root_agent_doc_path = self.project_root / "AGENT_DEVELOPMENT.md"
+        self.root_legacy_doc_path = self.project_root / "DEVELOPMENT.md"
 
     def save_version(self, content: str) -> str:
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -25,6 +28,8 @@ class VersionManager:
 
         write_text(candidate, content)
         write_text(self.version_dir / "DEVELOPMENT.md", content)
+        write_text(self.root_agent_doc_path, content)
+        write_text(self.root_legacy_doc_path, content)
         return file_name
 
     def list_versions(self) -> list[dict]:
@@ -58,6 +63,8 @@ class VersionManager:
     def restore_version(self, file_name: str) -> str:
         content = self.get_version_content(file_name)
         write_text(self.version_dir / "DEVELOPMENT.md", content)
+        write_text(self.root_agent_doc_path, content)
+        write_text(self.root_legacy_doc_path, content)
         return content
 
     def compare_versions(self, source_name: str, target_name: str = "DEVELOPMENT.md") -> str:

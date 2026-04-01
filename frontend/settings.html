@@ -59,7 +59,10 @@
         <h3>文档路径规则</h3>
         <label>
           项目开发文档路径（project_doc）
-          <input id="project-doc-path" type="text" />
+          <div class="path-input-row">
+            <input id="project-doc-path" type="text" />
+            <button id="pick-project-doc-path" type="button" class="secondary">选目录并填入 PROJECT.md</button>
+          </div>
         </label>
         <label>
           Agent 开发文档目录（agent_doc_dir）
@@ -67,6 +70,16 @@
             <input id="agent-doc-dir" type="text" />
             <button id="pick-agent-doc-dir" type="button" class="secondary">选择文件夹</button>
           </div>
+        </label>
+
+        <h3>积极上传默认策略</h3>
+        <label class="checkbox-line">
+          <input id="global-proactive-push-enabled" type="checkbox" />
+          默认启用“积极上传”（每开发完一个新功能就提交上传）
+        </label>
+        <label>
+          默认上传分支（可留空）
+          <input id="global-proactive-push-branch" type="text" placeholder="例如：main / release/v1" />
         </label>
 
         <div class="actions">

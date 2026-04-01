@@ -27,6 +27,22 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  document.getElementById("pick-project-doc-path").addEventListener("click", async () => {
+    try {
+      const input = document.getElementById("project-doc-path");
+      const current = input.value.trim();
+      const initialDir = current.toLowerCase().endsWith(".md")
+        ? current.replace(/[\\/][^\\/]*$/, "")
+        : current;
+      const selected = await pickFolder(initialDir);
+      if (selected) {
+        input.value = toProjectDocPath(selected);
+      }
+    } catch (error) {
+      showMessage(`选择文件夹失败：${error.message}`, true);
+    }
+  });
+
   document.getElementById("save-config").addEventListener("click", onSaveConfig);
 
   loadConfig().catch((error) => {
@@ -46,6 +62,10 @@ async function loadConfig() {
   document.getElementById("api-retries").value = config.api?.max_retries ?? 2;
   document.getElementById("project-doc-path").value = config.doc_paths?.project_doc || "docs/project/PROJECT.md";
   document.getElementById("agent-doc-dir").value = config.doc_paths?.agent_doc_dir || "docs/agent";
+  document.getElementById("global-proactive-push-enabled").checked =
+    config.workflow?.proactive_push_enabled_default || false;
+  document.getElementById("global-proactive-push-branch").value =
+    config.workflow?.proactive_push_branch_default || "";
 }
 
 async function onSaveConfig() {
@@ -62,6 +82,10 @@ async function onSaveConfig() {
     doc_paths: {
       project_doc: document.getElementById("project-doc-path").value.trim(),
       agent_doc_dir: document.getElementById("agent-doc-dir").value.trim(),
+    },
+    workflow: {
+      proactive_push_enabled_default: document.getElementById("global-proactive-push-enabled").checked,
+      proactive_push_branch_default: document.getElementById("global-proactive-push-branch").value.trim(),
     },
   };
 
@@ -115,4 +139,13 @@ async function pickFolder(initialDir) {
     body: JSON.stringify({ initial_dir: initialDir || null }),
   });
   return result?.selected ? result.path : "";
+}
+
+function toProjectDocPath(folder) {
+  if (!folder) {
+    return "";
+  }
+  const normalized = folder.endsWith("\\") || folder.endsWith("/") ? folder.slice(0, -1) : folder;
+  const sep = normalized.includes("\\") ? "\\" : "/";
+  return `${normalized}${sep}PROJECT.md`;
 }

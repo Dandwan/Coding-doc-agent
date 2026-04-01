@@ -33,7 +33,15 @@ class SessionManager:
             )
         return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)
 
-    def create_session(self, name: str | None, project_name: str) -> dict:
+    def create_session(
+        self,
+        name: str | None,
+        project_name: str,
+        *,
+        proactive_push_enabled: bool = False,
+        proactive_push_branch: str = "",
+        root_agent_doc_path: str = "AGENT_DEVELOPMENT.md",
+    ) -> dict:
         sid = uuid4().hex[:12]
         now = now_iso()
 
@@ -60,7 +68,12 @@ class SessionManager:
                 "部署与运行环境",
             ],
             "current_question": first_question,
-            "current_document": generate_initial_document(project_name),
+            "current_document": generate_initial_document(
+                project_name,
+                proactive_push_enabled=proactive_push_enabled,
+                proactive_push_branch=proactive_push_branch,
+                root_agent_doc_path=root_agent_doc_path,
+            ),
             "is_complete": False,
             "current_version": None,
         }

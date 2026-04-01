@@ -93,6 +93,20 @@
               <button id="pick-project-folder-path" type="button" class="secondary">选择文件夹</button>
             </div>
           </label>
+
+          <label class="checkbox-line">
+            <input id="proactive-push-use-global" type="checkbox" />
+            积极上传策略：继承全局默认值
+          </label>
+          <label class="checkbox-line">
+            <input id="proactive-push-enabled" type="checkbox" />
+            启用“积极上传”（每开发完一个新功能就提交上传）
+          </label>
+          <label>
+            上传分支（可留空）
+            <input id="proactive-push-branch" type="text" placeholder="例如：feature/snake-v2" />
+          </label>
+
           <button id="save-project-settings" class="teal">保存项目设置</button>
         </section>
       </main>

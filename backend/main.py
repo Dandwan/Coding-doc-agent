@@ -166,6 +166,9 @@ def update_project(project_id: str, payload: ProjectUpdateRequest) -> dict:
             name=payload.name,
             folder=payload.folder,
             project_doc_path=payload.project_doc_path,
+            proactive_push_use_global=payload.proactive_push_use_global,
+            proactive_push_enabled=payload.proactive_push_enabled,
+            proactive_push_branch=payload.proactive_push_branch,
         )
     except ProjectNotFoundError:
         raise HTTPException(status_code=404, detail="项目不存在") from None
@@ -203,7 +206,13 @@ def list_sessions(project_id: str) -> list[dict]:
 def create_session(project_id: str, payload: SessionCreateRequest) -> dict:
     project = _project_or_404(project_id)
     manager = _session_manager(project)
-    session = manager.create_session(payload.name, project.get("name", "未命名项目"))
+    session = manager.create_session(
+        payload.name,
+        project.get("name", "未命名项目"),
+        proactive_push_enabled=bool(project.get("proactive_push_enabled", False)),
+        proactive_push_branch=str(project.get("proactive_push_branch", "")),
+        root_agent_doc_path=Path(str(project.get("root_agent_doc_path", "AGENT_DEVELOPMENT.md"))).name,
+    )
 
     version_name = _version_manager(project).save_version(session["current_document"])
     session["current_version"] = version_name

@@ -30,6 +30,9 @@ function bindStaticActions() {
   });
 
   document.getElementById("open-folder-btn").addEventListener("click", openFolder);
+  document
+    .getElementById("proactive-push-use-global")
+    .addEventListener("change", applyProactiveControlsState);
   document.getElementById("create-session").addEventListener("click", createSession);
   document.getElementById("rename-session").addEventListener("click", renameSession);
   document.getElementById("delete-session").addEventListener("click", deleteSession);
@@ -77,6 +80,18 @@ function applyProjectSettingsToForm() {
   document.getElementById("project-name-input").value = state.project.name || "";
   document.getElementById("project-doc-path").value = state.project.project_doc_path || "";
   document.getElementById("project-folder-path").value = state.project.folder || "";
+
+  const useGlobal = Boolean(state.project.proactive_push_use_global);
+  document.getElementById("proactive-push-use-global").checked = useGlobal;
+  document.getElementById("proactive-push-enabled").checked = Boolean(state.project.proactive_push_enabled);
+  document.getElementById("proactive-push-branch").value = state.project.proactive_push_branch || "";
+  applyProactiveControlsState();
+}
+
+function applyProactiveControlsState() {
+  const useGlobal = document.getElementById("proactive-push-use-global").checked;
+  document.getElementById("proactive-push-enabled").disabled = useGlobal;
+  document.getElementById("proactive-push-branch").disabled = useGlobal;
 }
 
 function renderSessions() {
@@ -403,6 +418,9 @@ async function saveProjectSettings() {
   const projectName = document.getElementById("project-name-input").value.trim();
   const projectDocPath = document.getElementById("project-doc-path").value.trim();
   const projectFolderPath = document.getElementById("project-folder-path").value.trim();
+  const proactivePushUseGlobal = document.getElementById("proactive-push-use-global").checked;
+  const proactivePushEnabled = document.getElementById("proactive-push-enabled").checked;
+  const proactivePushBranch = document.getElementById("proactive-push-branch").value.trim();
 
   const payload = {};
   if (projectName) {
@@ -413,6 +431,12 @@ async function saveProjectSettings() {
   }
   if (projectFolderPath) {
     payload.folder = projectFolderPath;
+  }
+
+  payload.proactive_push_use_global = proactivePushUseGlobal;
+  if (!proactivePushUseGlobal) {
+    payload.proactive_push_enabled = proactivePushEnabled;
+    payload.proactive_push_branch = proactivePushBranch;
   }
 
   if (!Object.keys(payload).length) {

@@ -58,6 +58,10 @@ def test_config_read_and_update(client: tuple[TestClient, Path], tmp_path: Path)
             "projects_root": str(new_root),
             "api": {"model": "gpt-test"},
             "doc_paths": {"agent_doc_dir": "docs/agent_versions"},
+            "workflow": {
+                "proactive_push_enabled_default": True,
+                "proactive_push_branch_default": "release/test",
+            },
         },
     )
     assert save_resp.status_code == 200
@@ -66,6 +70,8 @@ def test_config_read_and_update(client: tuple[TestClient, Path], tmp_path: Path)
     assert loaded["projects_root"] == str(new_root)
     assert loaded["api"]["model"] == "gpt-test"
     assert loaded["doc_paths"]["agent_doc_dir"] == "docs/agent_versions"
+    assert loaded["workflow"]["proactive_push_enabled_default"] is True
+    assert loaded["workflow"]["proactive_push_branch_default"] == "release/test"
 
 
 def test_create_project_keeps_existing_files(client: tuple[TestClient, Path], tmp_path: Path) -> None:
@@ -124,9 +130,33 @@ def test_pick_folder_endpoint(client: tuple[TestClient, Path], monkeypatch: pyte
 def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Path], tmp_path: Path) -> None:
     c, _ = client
 
+    c.post(
+        "/api/config",
+        json={
+            "workflow": {
+                "proactive_push_enabled_default": True,
+                "proactive_push_branch_default": "feature/default",
+            }
+        },
+    )
+
     folder = tmp_path / "flow_project"
     created = _create_project(c, folder, name="FlowProject")
     project_id = created["id"]
+
+    detail = c.get(f"/api/projects/{project_id}").json()
+    assert detail["proactive_push_enabled"] is True
+    assert detail["proactive_push_branch"] == "feature/default"
+
+    patched = c.patch(
+        f"/api/projects/{project_id}",
+        json={
+            "proactive_push_use_global": False,
+            "proactive_push_enabled": True,
+            "proactive_push_branch": "feature/snake-v2",
+        },
+    )
+    assert patched.status_code == 200
 
     session_resp = c.post(f"/api/projects/{project_id}/sessions", json={"name": "需求澄清"})
     assert session_resp.status_code == 200
@@ -144,6 +174,12 @@ def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Pa
     assert "# 项目功能清单" in updated_session["current_document"]
     assert "# 项目细节" in updated_session["current_document"]
     assert "# 代码架构与实现方式" in updated_session["current_document"]
+    assert "feature/snake-v2" in updated_session["current_document"]
+
+    root_doc = folder / "AGENT_DEVELOPMENT.md"
+    assert root_doc.exists()
+    root_text = root_doc.read_text(encoding="utf-8")
+    assert "# 项目功能清单" in root_text
 
     versions_resp = c.get(f"/api/projects/{project_id}/doc/versions")
     assert versions_resp.status_code == 200
@@ -167,3 +203,50 @@ def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Pa
     restored = restore_resp.json()
     assert restored["file_name"] == source
     assert "content" in restored
+
+
+def test_reverify_when_new_requirements_after_complete(client: tuple[TestClient, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    c, _ = client
+    folder = tmp_path / "reverify_project"
+    created = _create_project(c, folder, name="ReverifyProject")
+    project_id = created["id"]
+
+    session_resp = c.post(f"/api/projects/{project_id}/sessions", json={"name": "完成后继续"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+
+    import backend.main as main  # noqa: WPS433
+
+    calls = {"count": 0}
+
+    def fake_query_llm(**kwargs):
+        calls["count"] += 1
+        return {
+            "next_question": "请补充细节",
+            "options": ["边界", "验收", "回归"],
+            "unresolved_points": [],
+            "document_markdown": "",
+            "is_complete": True,
+        }
+
+    monkeypatch.setattr(main.conversation_service, "_query_llm", fake_query_llm)
+
+    first = c.post(
+        f"/api/projects/{project_id}/sessions/{session_id}/answer",
+        json={"selected_options": ["效率提升与自动化"], "text_input": "先完成基础版本", "skip_question": False},
+    )
+    assert first.status_code == 200
+    first_session = first.json()["session"]
+    assert first_session["is_complete"] is True
+
+    second = c.post(
+        f"/api/projects/{project_id}/sessions/{session_id}/answer",
+        json={"selected_options": ["继续细化功能"], "text_input": "新增联机排行榜需求", "skip_question": False},
+    )
+    assert second.status_code == 200
+    second_session = second.json()["session"]
+
+    assert calls["count"] == 2
+    assert second_session["is_complete"] is False
+    assert "新增需求影响范围确认" in second_session["unresolved_points"]
+    assert "新增需求验收标准确认" in second_session["unresolved_points"]

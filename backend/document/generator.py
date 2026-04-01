@@ -3,7 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 
-def generate_initial_document(project_name: str) -> str:
+def generate_initial_document(
+    project_name: str,
+    *,
+    proactive_push_enabled: bool = False,
+    proactive_push_branch: str = "",
+    root_agent_doc_path: str = "AGENT_DEVELOPMENT.md",
+) -> str:
+    proactive_lines = _build_proactive_push_lines(proactive_push_enabled, proactive_push_branch)
+
     return f"""# 项目功能清单
 
 - 待补充：请通过左侧问题逐步澄清目标用户、功能范围、交付标准。
@@ -26,6 +34,13 @@ def generate_initial_document(project_name: str) -> str:
 - 项目开发文档路径遵循全局配置 `doc_paths.project_doc`（默认 `docs/project/PROJECT.md`）。
 - 开发项目的 Agent 负责维护项目开发文档，DocAgent 仅读取该文档作为上下文。
 - 项目开发文档建议记录实现清单、部署说明、配置项说明、测试结果与待办事项。
+
+## Agent开发文档输出规范
+- 当前会话最新 Agent 开发文档固定输出到项目根目录：`{root_agent_doc_path}`。
+- 同时保留版本历史，便于回溯和恢复。
+
+## 积极上传规范
+{proactive_lines}
 
 # 代码架构与实现方式
 
@@ -58,9 +73,13 @@ def generate_document_from_context(
     history: list[dict[str, Any]],
     unresolved_points: list[str],
     previous_document: str,
+    proactive_push_enabled: bool = False,
+    proactive_push_branch: str = "",
+    root_agent_doc_path: str = "AGENT_DEVELOPMENT.md",
 ) -> str:
     answers = _collect_answer_lines(history)
     function_items = _derive_function_items(answers)
+    proactive_lines = _build_proactive_push_lines(proactive_push_enabled, proactive_push_branch)
 
     unresolved_lines = "\n".join(f"- {item}" for item in unresolved_points) if unresolved_points else "- 已收敛"
     answer_lines = "\n".join(f"- {line}" for line in answers[-8:]) if answers else "- 暂无"
@@ -95,6 +114,13 @@ def generate_document_from_context(
 - 当前项目开发文档状态：{project_doc_state}。
 - 项目开发文档由开发项目的 Agent 维护，DocAgent 仅做读取。
 - 开发项目的 Agent 更新功能后，应同步回写项目开发文档。
+
+## Agent开发文档输出规范
+- 最新 Agent 开发文档固定输出到项目根目录：`{root_agent_doc_path}`。
+- 每次需求更新后都要覆盖该文件，并保存版本快照。
+
+## 积极上传规范
+{proactive_lines}
 
 # 代码架构与实现方式
 
@@ -159,3 +185,20 @@ def _derive_function_items(answer_lines: list[str]) -> str:
 
     items = [f"- 需求线索：{line}" for line in answer_lines[-5:]]
     return "\n".join(items)
+
+
+def _build_proactive_push_lines(proactive_push_enabled: bool, proactive_push_branch: str) -> str:
+    if not proactive_push_enabled:
+        return "- 当前未启用“积极上传”要求。"
+
+    branch = proactive_push_branch.strip()
+    if branch:
+        return (
+            f"- 已启用“积极上传”：开发项目的 Agent 每完成一个新功能，必须立即提交并上传到 `{branch}` 分支。\n"
+            "- 提交信息需明确对应功能点和影响范围。"
+        )
+
+    return (
+        "- 已启用“积极上传”：开发项目的 Agent 每完成一个新功能，必须立即提交并上传远程仓库。\n"
+        "- 未指定分支时，不强制强调分支名称。"
+    )

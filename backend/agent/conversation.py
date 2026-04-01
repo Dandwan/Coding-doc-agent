@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from backend.agent.prompt_builder import build_system_prompt
@@ -18,6 +19,8 @@ class ConversationService:
     def process_answer(self, project: dict[str, Any], session: dict[str, Any], answer_payload: dict[str, Any]) -> dict[str, Any]:
         current_question = str(session.get("current_question", {}).get("question", "请补充需求"))
         answer_text = self._format_answer(answer_payload)
+        was_complete = bool(session.get("is_complete", False))
+        force_reverify = self._should_reverify(was_complete, answer_payload)
 
         history = list(session.get("history", []))
         history.append(
@@ -29,10 +32,16 @@ class ConversationService:
         )
         session["history"] = history
 
+        if force_reverify:
+            session["unresolved_points"] = self._ensure_reverify_points(session.get("unresolved_points", []))
+
         config = self.config_manager.load()
         project_doc_path = project.get("project_doc_path") or config["doc_paths"]["project_doc"]
         project_doc_content = load_project_document(project["folder"], project_doc_path)
         project_doc_exists = project_doc_content is not None
+        proactive_push_enabled = bool(project.get("proactive_push_enabled", False))
+        proactive_push_branch = str(project.get("proactive_push_branch", "")).strip()
+        root_agent_doc_path = str(project.get("root_agent_doc_path", "AGENT_DEVELOPMENT.md"))
 
         parsed: dict[str, Any] | None = None
         llm_error = ""
@@ -45,16 +54,23 @@ class ConversationService:
                 project_doc_path=project_doc_path,
                 project_doc_exists=project_doc_exists,
                 project_doc_content=project_doc_content,
+                proactive_push_enabled=proactive_push_enabled,
+                proactive_push_branch=proactive_push_branch,
+                force_reverify=force_reverify,
             )
         except Exception as exc:
             llm_error = str(exc)
 
         if parsed is None:
-            parsed = self._fallback_result(session)
+            parsed = self._fallback_result(session, force_reverify=force_reverify)
 
+        seed_unresolved = session.get("unresolved_points", [])
         unresolved_points = parsed.get("unresolved_points", [])
         if not unresolved_points:
-            unresolved_points = self._fallback_unresolved(session.get("unresolved_points", []), answer_payload)
+            unresolved_points = self._fallback_unresolved(seed_unresolved, answer_payload)
+
+        if force_reverify:
+            unresolved_points = self._ensure_reverify_points(unresolved_points)
 
         previous_document = str(session.get("current_document", ""))
         current_document = parsed.get("document_markdown") or generate_document_from_context(
@@ -64,11 +80,16 @@ class ConversationService:
             history=history,
             unresolved_points=unresolved_points,
             previous_document=previous_document,
+            proactive_push_enabled=proactive_push_enabled,
+            proactive_push_branch=proactive_push_branch,
+            root_agent_doc_path=Path(root_agent_doc_path).name,
         )
         current_document = ensure_required_sections(current_document, previous_document=previous_document)
 
         is_complete = bool(parsed.get("is_complete", False))
-        if len(history) >= 4 and len(unresolved_points) <= 1:
+        if force_reverify:
+            is_complete = False
+        elif len(history) >= 4 and len(unresolved_points) <= 1:
             is_complete = True
 
         session["current_question"] = {
@@ -80,6 +101,8 @@ class ConversationService:
         session["is_complete"] = is_complete
         if llm_error:
             session["last_error"] = llm_error
+        else:
+            session.pop("last_error", None)
 
         return session
 
@@ -93,6 +116,9 @@ class ConversationService:
         project_doc_path: str,
         project_doc_exists: bool,
         project_doc_content: str | None,
+        proactive_push_enabled: bool,
+        proactive_push_branch: str,
+        force_reverify: bool,
     ) -> dict[str, Any]:
         api = config.get("api", {})
         client = LLMClient(
@@ -109,6 +135,9 @@ class ConversationService:
             project_doc_path=project_doc_path,
             project_doc_exists=project_doc_exists,
             project_doc_content=project_doc_content,
+            proactive_push_enabled=proactive_push_enabled,
+            proactive_push_branch=proactive_push_branch,
+            force_reverify=force_reverify,
         )
 
         recent_history = session.get("history", [])[-8:]
@@ -122,6 +151,7 @@ class ConversationService:
             "unresolved_points": unresolved,
             "latest_answer": answer_text,
             "current_document": current_document,
+            "force_reverify": force_reverify,
         }
 
         messages = [
@@ -133,7 +163,16 @@ class ConversationService:
         parsed = parse_llm_json(raw)
         return parsed
 
-    def _fallback_result(self, session: dict[str, Any]) -> dict[str, Any]:
+    def _fallback_result(self, session: dict[str, Any], *, force_reverify: bool = False) -> dict[str, Any]:
+        if force_reverify:
+            return {
+                "next_question": "你新增的需求会影响哪些既有模块和接口？请逐项确认。",
+                "options": ["功能边界影响", "数据结构影响", "API/交互影响", "测试与回归影响"],
+                "unresolved_points": self._ensure_reverify_points(session.get("unresolved_points", [])),
+                "document_markdown": "",
+                "is_complete": False,
+            }
+
         history_count = len(session.get("history", []))
         question_pool = [
             {
@@ -195,3 +234,25 @@ class ConversationService:
             parts.append("补充=" + text_input)
 
         return "；".join(parts) if parts else "无有效回答"
+
+    def _should_reverify(self, was_complete: bool, answer_payload: dict[str, Any]) -> bool:
+        if not was_complete:
+            return False
+        if answer_payload.get("skip_question"):
+            return False
+
+        has_options = bool(answer_payload.get("selected_options"))
+        has_text = bool(str(answer_payload.get("text_input", "")).strip())
+        return has_options or has_text
+
+    def _ensure_reverify_points(self, unresolved_points: list[str]) -> list[str]:
+        merged = [item for item in unresolved_points if str(item).strip()]
+        required = [
+            "新增需求影响范围确认",
+            "新增需求验收标准确认",
+            "新增需求回归测试与发布策略",
+        ]
+        for item in required:
+            if item not in merged:
+                merged.append(item)
+        return merged

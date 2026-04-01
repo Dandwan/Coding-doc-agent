@@ -26,6 +26,10 @@ class ConfigManager:
                 "project_doc": "docs/project/PROJECT.md",
                 "agent_doc_dir": "docs/agent",
             },
+            "workflow": {
+                "proactive_push_enabled_default": False,
+                "proactive_push_branch_default": "",
+            },
         }
 
     def load(self) -> dict[str, Any]:

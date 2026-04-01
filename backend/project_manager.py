@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, Optional
 from uuid import uuid4
 
 from backend.config_manager import ConfigManager
@@ -41,6 +42,8 @@ class ProjectManager:
             "updated_at": now,
             "last_opened_at": now,
             "project_doc_path": old_meta.get("project_doc_path"),
+            "proactive_push_enabled_override": old_meta.get("proactive_push_enabled_override"),
+            "proactive_push_branch_override": old_meta.get("proactive_push_branch_override"),
         }
         write_json(meta_path, meta)
 
@@ -85,6 +88,8 @@ class ProjectManager:
                     "updated_at": project.get("updated_at", now_iso()),
                     "last_opened_at": now_iso(),
                     "project_doc_path": None,
+                    "proactive_push_enabled_override": None,
+                    "proactive_push_branch_override": None,
                 }
 
             meta["last_opened_at"] = now_iso()
@@ -93,6 +98,16 @@ class ProjectManager:
             config = self.config_manager.load()
             project_doc_path = meta.get("project_doc_path") or config["doc_paths"]["project_doc"]
             project_doc_exists = resolve_in_project(folder, project_doc_path).exists()
+
+            default_enabled, default_branch = self._get_global_proactive_defaults(config)
+            enabled_override = meta.get("proactive_push_enabled_override")
+            branch_override = meta.get("proactive_push_branch_override")
+            use_global = enabled_override is None and branch_override is None
+
+            proactive_push_enabled = default_enabled if enabled_override is None else bool(enabled_override)
+            proactive_push_branch = default_branch if branch_override is None else str(branch_override or "").strip()
+            if not proactive_push_enabled:
+                proactive_push_branch = ""
 
             updated_project = {
                 "id": project_id,
@@ -103,6 +118,12 @@ class ProjectManager:
                 "last_opened_at": meta.get("last_opened_at", now_iso()),
                 "project_doc_path": project_doc_path,
                 "project_doc_exists": project_doc_exists,
+                "root_agent_doc_path": str((folder / "AGENT_DEVELOPMENT.md").resolve()),
+                "proactive_push_enabled": proactive_push_enabled,
+                "proactive_push_branch": proactive_push_branch,
+                "proactive_push_use_global": use_global,
+                "proactive_push_enabled_override": enabled_override,
+                "proactive_push_branch_override": branch_override,
             }
             return updated_project
         return None
@@ -119,9 +140,12 @@ class ProjectManager:
         self,
         project_id: str,
         *,
-        name: str | None = None,
-        folder: str | None = None,
-        project_doc_path: str | None = None,
+        name: Optional[str] = None,
+        folder: Optional[str] = None,
+        project_doc_path: Optional[str] = None,
+        proactive_push_use_global: Optional[bool] = None,
+        proactive_push_enabled: Optional[bool] = None,
+        proactive_push_branch: Optional[str] = None,
     ) -> dict:
         projects = self.config_manager.load_projects_index()
         target_index = -1
@@ -153,12 +177,23 @@ class ProjectManager:
                 "updated_at": now,
                 "last_opened_at": now,
                 "project_doc_path": None,
+                "proactive_push_enabled_override": None,
+                "proactive_push_branch_override": None,
             }
 
         if name is not None and name.strip():
             meta["name"] = name.strip()
         if project_doc_path is not None:
             meta["project_doc_path"] = project_doc_path.strip() or None
+
+        if proactive_push_use_global is True:
+            meta["proactive_push_enabled_override"] = None
+            meta["proactive_push_branch_override"] = None
+        else:
+            if proactive_push_enabled is not None:
+                meta["proactive_push_enabled_override"] = bool(proactive_push_enabled)
+            if proactive_push_branch is not None:
+                meta["proactive_push_branch_override"] = proactive_push_branch.strip()
 
         meta["updated_at"] = now
         write_json(meta_path, meta)
@@ -210,7 +245,7 @@ class ProjectManager:
     def _move_managed_content(self, old_folder: Path, new_folder: Path) -> None:
         ensure_dir(new_folder)
 
-        for item_name in ["meta.json", "sessions", "docs"]:
+        for item_name in ["meta.json", "sessions", "docs", "AGENT_DEVELOPMENT.md", "DEVELOPMENT.md"]:
             src = old_folder / item_name
             dst = new_folder / item_name
             if src.exists():
@@ -232,3 +267,11 @@ class ProjectManager:
             src.rmdir()
         except OSError:
             pass
+
+    def _get_global_proactive_defaults(self, config: dict[str, Any]) -> tuple[bool, str]:
+        workflow = config.get("workflow", {})
+        enabled = bool(workflow.get("proactive_push_enabled_default", False))
+        branch = str(workflow.get("proactive_push_branch_default", "")).strip()
+        if not enabled:
+            branch = ""
+        return enabled, branch

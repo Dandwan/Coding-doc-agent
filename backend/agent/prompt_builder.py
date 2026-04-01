@@ -7,6 +7,9 @@ def build_system_prompt(
     project_doc_path: str,
     project_doc_exists: bool,
     project_doc_content: str | None,
+    proactive_push_enabled: bool,
+    proactive_push_branch: str,
+    force_reverify: bool = False,
 ) -> str:
     project_doc_note = (
         f"已加载项目开发文档（路径：{project_doc_path}）。"
@@ -18,12 +21,30 @@ def build_system_prompt(
     if len(project_doc_text) > 6000:
         project_doc_text = project_doc_text[:6000] + "\n\n[内容已截断]"
 
+    if proactive_push_enabled:
+        if proactive_push_branch.strip():
+            proactive_push_note = (
+                f"已启用积极上传：开发项目的 Agent 每完成一个新功能都必须提交并上传到 `{proactive_push_branch.strip()}` 分支。"
+            )
+        else:
+            proactive_push_note = "已启用积极上传：开发项目的 Agent 每完成一个新功能都必须提交并上传远程仓库。"
+    else:
+        proactive_push_note = "未启用积极上传要求。"
+
+    reverify_note = (
+        "当前为已完成后新增需求场景：必须重新展开细节核实，is_complete 必须返回 false，并给出新的待解决问题。"
+        if force_reverify
+        else ""
+    )
+
     return (
         f"""
 你是 DocAgent 的需求澄清助手，目标是通过多轮问答帮助用户生成高质量 Agent 开发文档。
 
 项目名：{project_name}
 项目开发文档状态：{project_doc_note}
+积极上传策略：{proactive_push_note}
+{reverify_note}
 
 输出要求：
 1. 只返回 JSON，不要输出任何额外说明。
@@ -41,6 +62,11 @@ def build_system_prompt(
    - 项目开发文档路径与位置
    - 由开发项目的 Agent 负责维护
    - DocAgent 仅读取不写入
+5. 在文档中必须体现“Agent开发文档输出规范”：最新文档在项目根目录 `AGENT_DEVELOPMENT.md`。
+6. 如果启用了积极上传：
+    - 每完成一个新功能就提交上传
+    - 若提供了分支名，必须明确上传到对应分支
+    - 若未提供分支名，不强制强调分支
 
 如果已接近收敛，可以将 is_complete 设为 true，并减少 unresolved_points。
 
