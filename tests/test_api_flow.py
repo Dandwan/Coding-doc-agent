@@ -162,10 +162,12 @@ def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Pa
     assert session_resp.status_code == 200
     session = session_resp.json()
     session_id = session["id"]
+    assert session["current_question"]["options"] == []
+    assert "先直接描述你的需求" in session["current_question"]["question"]
 
     answer_resp = c.post(
         f"/api/projects/{project_id}/sessions/{session_id}/answer",
-        json={"selected_options": ["效率提升与自动化"], "text_input": "优先自动生成文档", "skip_question": False},
+        json={"selected_options": [], "text_input": "优先自动生成文档，目标是减少需求遗漏", "skip_question": False},
     )
     assert answer_resp.status_code == 200, answer_resp.text
     updated_session = answer_resp.json()["session"]
@@ -233,11 +235,19 @@ def test_reverify_when_new_requirements_after_complete(client: tuple[TestClient,
 
     first = c.post(
         f"/api/projects/{project_id}/sessions/{session_id}/answer",
-        json={"selected_options": ["效率提升与自动化"], "text_input": "先完成基础版本", "skip_question": False},
+        json={"selected_options": [], "text_input": "先完成基础版本", "skip_question": False},
     )
     assert first.status_code == 200
     first_session = first.json()["session"]
-    assert first_session["is_complete"] is True
+    assert first_session["is_complete"] is False
+
+    second_ready = c.post(
+        f"/api/projects/{project_id}/sessions/{session_id}/answer",
+        json={"selected_options": ["边界"], "text_input": "补充一轮后可收敛", "skip_question": False},
+    )
+    assert second_ready.status_code == 200
+    second_ready_session = second_ready.json()["session"]
+    assert second_ready_session["is_complete"] is True
 
     second = c.post(
         f"/api/projects/{project_id}/sessions/{session_id}/answer",
@@ -246,7 +256,7 @@ def test_reverify_when_new_requirements_after_complete(client: tuple[TestClient,
     assert second.status_code == 200
     second_session = second.json()["session"]
 
-    assert calls["count"] == 2
+    assert calls["count"] == 3
     assert second_session["is_complete"] is False
     assert "新增需求影响范围确认" in second_session["unresolved_points"]
     assert "新增需求验收标准确认" in second_session["unresolved_points"]

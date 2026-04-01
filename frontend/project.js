@@ -268,9 +268,19 @@ function renderOptions(options) {
 }
 
 function updateExtraLabel() {
+  const optionCount = document.querySelectorAll('input[name="question-option"]').length;
   const checkedCount = document.querySelectorAll('input[name="question-option"]:checked').length;
   const label = document.getElementById("extra-label");
+  const input = document.getElementById("extra-input");
+
+  if (optionCount === 0) {
+    label.textContent = "需求描述：";
+    input.placeholder = "请直接描述你的需求，重点写清目标、用户、输入输出和约束";
+    return;
+  }
+
   label.textContent = checkedCount > 0 ? "补充：" : "其他：";
+  input.placeholder = checkedCount > 0 ? "可继续补充细节（可选）" : "若选项都不准确，可直接描述";
 }
 
 async function submitAnswer(skipQuestion) {

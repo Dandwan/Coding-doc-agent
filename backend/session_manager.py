@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from backend.document.generator import generate_initial_document
 from backend.utils.file_utils import ensure_dir, now_iso, read_json, write_json
 
 
@@ -47,13 +46,8 @@ class SessionManager:
 
         display_name = name.strip() if name and name.strip() else f"新会话-{now[11:19].replace(':', '')}"
         first_question = {
-            "question": "你希望这个工具优先解决哪类问题？",
-            "options": [
-                "效率提升与自动化",
-                "数据处理与分析",
-                "文档/内容生产",
-                "系统集成与平台化",
-            ],
+            "question": "请先直接描述你的需求，我会重点找出其中不清晰或可能产生歧义的细节。",
+            "options": [],
         }
 
         payload = {
@@ -62,20 +56,12 @@ class SessionManager:
             "created_at": now,
             "updated_at": now,
             "history": [],
-            "unresolved_points": [
-                "核心用户是谁",
-                "输入输出边界",
-                "部署与运行环境",
-            ],
+            "unresolved_points": [],
             "current_question": first_question,
-            "current_document": generate_initial_document(
-                project_name,
-                proactive_push_enabled=proactive_push_enabled,
-                proactive_push_branch=proactive_push_branch,
-                root_agent_doc_path=root_agent_doc_path,
-            ),
+            "current_document": "",
             "is_complete": False,
             "current_version": None,
+            "requirement_seeded": False,
         }
 
         self.save_session(sid, payload)

@@ -149,6 +149,7 @@ def main() -> None:
     # 场景A：已有项目 + 已有项目开发文档 + 新需求，生成新的 Agent 开发文档。
     session = api("POST", f"/api/projects/{project_id}/sessions", json={"name": "已有项目更新指南"})
     session_id = session["id"]
+    first_turn_free_input_mode = (session.get("current_question", {}).get("options") or []) == []
 
     answers = [
         "在已有单机版基础上，新增在线排行榜，并保持对 Python 初学者友好。",
@@ -263,6 +264,7 @@ def main() -> None:
         "global_proactive_push_default_enabled": config.get("workflow", {}).get("proactive_push_enabled_default"),
         "global_proactive_push_default_branch": config.get("workflow", {}).get("proactive_push_branch_default"),
         "session_id": session_id,
+        "first_turn_free_input_mode": first_turn_free_input_mode,
         "history_count": len(session_after_new_requirement.get("history", [])),
         "was_complete_before_new_requirement": was_complete_before_new_requirement,
         "is_complete_after_new_requirement": bool(session_after_new_requirement.get("is_complete")),
