@@ -109,3 +109,8 @@ tests/       自动化测试
 建议仓库 Description 使用：
 
 项目管理式需求澄清 Agent：多会话问答、文档版本化、项目文档只读参考、FastAPI + 原生前端一体化实现。
+
+## 发布后补充说明
+
+- 已提供 `DESCRIPTION.md`，可直接复制其中一句话到 GitHub 仓库 Description。
+- 项目开发文档采用 `docs/project/PROJECT.md`，后续每次功能迭代请同步更新该文件。
