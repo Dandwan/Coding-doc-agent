@@ -31,7 +31,10 @@
             </label>
             <label>
               项目文件夹路径
-              <input id="project-folder" type="text" placeholder="可留空，自动使用全局项目根目录" />
+              <div class="path-input-row">
+                <input id="project-folder" type="text" placeholder="可留空，自动使用全局项目根目录" />
+                <button id="pick-project-folder" type="button" class="secondary">选择文件夹</button>
+              </div>
             </label>
             <label class="checkbox-line">
               <input id="use-default-folder" type="checkbox" checked />

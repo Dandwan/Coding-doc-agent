@@ -81,11 +81,17 @@
           </label>
           <label>
             项目开发文档路径（可覆盖全局）
-            <input id="project-doc-path" type="text" />
+            <div class="path-input-row">
+              <input id="project-doc-path" type="text" />
+              <button id="pick-project-doc-folder" type="button" class="secondary">选目录并填入 PROJECT.md</button>
+            </div>
           </label>
           <label>
             项目文件夹路径（迁移 managed 文件）
-            <input id="project-folder-path" type="text" />
+            <div class="path-input-row">
+              <input id="project-folder-path" type="text" />
+              <button id="pick-project-folder-path" type="button" class="secondary">选择文件夹</button>
+            </div>
           </label>
           <button id="save-project-settings" class="teal">保存项目设置</button>
         </section>

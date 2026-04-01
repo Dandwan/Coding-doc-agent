@@ -36,6 +36,8 @@ function bindStaticActions() {
   document.getElementById("submit-answer").addEventListener("click", () => submitAnswer(false));
   document.getElementById("skip-question").addEventListener("click", () => submitAnswer(true));
   document.getElementById("save-project-settings").addEventListener("click", saveProjectSettings);
+  document.getElementById("pick-project-folder-path").addEventListener("click", onPickProjectFolderPath);
+  document.getElementById("pick-project-doc-folder").addEventListener("click", onPickProjectDocFolder);
   document.getElementById("view-version").addEventListener("click", viewVersion);
   document.getElementById("compare-version").addEventListener("click", compareVersion);
   document.getElementById("restore-version").addEventListener("click", restoreVersion);
@@ -438,6 +440,43 @@ async function openFolder() {
   showMessage("已触发系统文件管理器", false);
 }
 
+async function onPickProjectFolderPath() {
+  try {
+    const input = document.getElementById("project-folder-path");
+    const selected = await pickFolder(input.value.trim());
+    if (selected) {
+      input.value = selected;
+    }
+  } catch (error) {
+    showMessage(`选择文件夹失败：${error.message}`, true);
+  }
+}
+
+async function onPickProjectDocFolder() {
+  try {
+    const input = document.getElementById("project-doc-path");
+    const current = input.value.trim();
+    const initialDir = current.toLowerCase().endsWith(".md")
+      ? current.replace(/[\\/][^\\/]*$/, "")
+      : current;
+    const selected = await pickFolder(initialDir);
+    if (selected) {
+      input.value = toProjectDocPath(selected);
+    }
+  } catch (error) {
+    showMessage(`选择文件夹失败：${error.message}`, true);
+  }
+}
+
+function toProjectDocPath(folder) {
+  if (!folder) {
+    return "";
+  }
+  const normalized = folder.endsWith("\\") || folder.endsWith("/") ? folder.slice(0, -1) : folder;
+  const sep = normalized.includes("\\") ? "\\" : "/";
+  return `${normalized}${sep}PROJECT.md`;
+}
+
 function renderDocPreview(markdown) {
   const preview = document.getElementById("doc-preview");
   if (!markdown) {
@@ -489,6 +528,14 @@ async function api(url, options = {}) {
     return response.json();
   }
   return response.text();
+}
+
+async function pickFolder(initialDir) {
+  const result = await api("/api/system/pick-folder", {
+    method: "POST",
+    body: JSON.stringify({ initial_dir: initialDir || null }),
+  });
+  return result?.selected ? result.path : "";
 }
 
 function escapeHtml(value) {

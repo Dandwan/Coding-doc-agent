@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -45,6 +47,10 @@ project_manager = ProjectManager(config_manager)
 conversation_service = ConversationService(config_manager)
 
 
+class PickFolderRequest(BaseModel):
+    initial_dir: Optional[str] = None
+
+
 def _project_or_404(project_id: str) -> dict:
     project = project_manager.get_project(project_id)
     if not project:
@@ -67,6 +73,27 @@ def _safe_folder_name(name: str) -> str:
     return safe or "DocAgentProject"
 
 
+def _pick_folder_dialog(initial_dir: Optional[str]) -> str:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"当前环境不支持文件夹选择器: {exc}") from None
+
+    initial = str(Path(initial_dir).expanduser()) if initial_dir else str(Path.home())
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:
+        pass
+
+    selected = filedialog.askdirectory(initialdir=initial, mustexist=False, title="选择文件夹")
+    root.destroy()
+    return str(Path(selected).resolve()) if selected else ""
+
+
 @app.get("/", include_in_schema=False)
 def index_page() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
@@ -85,6 +112,15 @@ def settings_page() -> FileResponse:
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.post("/api/system/pick-folder")
+def pick_folder(payload: PickFolderRequest) -> dict:
+    selected_path = _pick_folder_dialog(payload.initial_dir)
+    return {
+        "selected": bool(selected_path),
+        "path": selected_path,
+    }
 
 
 @app.get("/api/config")

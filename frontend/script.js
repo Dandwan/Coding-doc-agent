@@ -6,13 +6,26 @@ const state = {
 document.addEventListener("DOMContentLoaded", () => {
   const useDefault = document.getElementById("use-default-folder");
   const folderInput = document.getElementById("project-folder");
+  const pickFolderBtn = document.getElementById("pick-project-folder");
 
   document.getElementById("open-settings").addEventListener("click", () => {
     window.location.href = "/settings";
   });
 
+  pickFolderBtn.addEventListener("click", async () => {
+    try {
+      const selected = await pickFolder(folderInput.value.trim());
+      if (selected) {
+        folderInput.value = selected;
+      }
+    } catch (error) {
+      showCreateMessage(`选择文件夹失败：${error.message}`, true);
+    }
+  });
+
   useDefault.addEventListener("change", () => {
     folderInput.disabled = useDefault.checked;
+    pickFolderBtn.disabled = useDefault.checked;
     if (useDefault.checked) {
       folderInput.value = "";
     }
@@ -21,6 +34,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("create-project-form").addEventListener("submit", onCreateProject);
 
   folderInput.disabled = useDefault.checked;
+  pickFolderBtn.disabled = useDefault.checked;
   bootstrap().catch((error) => {
     showCreateMessage(`初始化失败：${error.message}`, true);
   });
@@ -143,6 +157,14 @@ async function api(url, options = {}) {
     return response.json();
   }
   return response.text();
+}
+
+async function pickFolder(initialDir) {
+  const result = await api("/api/system/pick-folder", {
+    method: "POST",
+    body: JSON.stringify({ initial_dir: initialDir || null }),
+  });
+  return result?.selected ? result.path : "";
 }
 
 function escapeHtml(value) {

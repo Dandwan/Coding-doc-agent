@@ -24,7 +24,10 @@
       <main class="panel stack">
         <label>
           默认项目根目录
-          <input id="projects-root" type="text" />
+          <div class="path-input-row">
+            <input id="projects-root" type="text" />
+            <button id="pick-projects-root" type="button" class="secondary">选择文件夹</button>
+          </div>
         </label>
 
         <h3>API 配置</h3>
@@ -60,7 +63,10 @@
         </label>
         <label>
           Agent 开发文档目录（agent_doc_dir）
-          <input id="agent-doc-dir" type="text" />
+          <div class="path-input-row">
+            <input id="agent-doc-dir" type="text" />
+            <button id="pick-agent-doc-dir" type="button" class="secondary">选择文件夹</button>
+          </div>
         </label>
 
         <div class="actions">

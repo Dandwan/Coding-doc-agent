@@ -106,6 +106,21 @@ def test_project_doc_exists_flag_updates(client: tuple[TestClient, Path], tmp_pa
     assert detail_2["project_doc_exists"] is True
 
 
+def test_pick_folder_endpoint(client: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    c, _ = client
+
+    import backend.main as main  # noqa: WPS433
+
+    expected_path = r"C:\Users\Dandwan\Downloads\test"
+    monkeypatch.setattr(main, "_pick_folder_dialog", lambda initial_dir: expected_path)
+
+    resp = c.post("/api/system/pick-folder", json={"initial_dir": "C:\\"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["selected"] is True
+    assert payload["path"] == expected_path
+
+
 def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Path], tmp_path: Path) -> None:
     c, _ = client
 

@@ -171,6 +171,22 @@ textarea {
   resize: vertical;
 }
 
+.path-input-row {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.path-input-row input {
+  margin-top: 0;
+}
+
+.path-input-row button {
+  white-space: nowrap;
+}
+
 button {
   border: 1px solid transparent;
   border-radius: 11px;
@@ -424,6 +440,10 @@ button:disabled {
 
 @media (max-width: 880px) {
   .main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .path-input-row {
     grid-template-columns: 1fr;
   }
 

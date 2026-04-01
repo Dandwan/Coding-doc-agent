@@ -3,6 +3,30 @@ document.addEventListener("DOMContentLoaded", () => {
     window.location.href = "/";
   });
 
+  document.getElementById("pick-projects-root").addEventListener("click", async () => {
+    try {
+      const current = document.getElementById("projects-root").value.trim();
+      const selected = await pickFolder(current);
+      if (selected) {
+        document.getElementById("projects-root").value = selected;
+      }
+    } catch (error) {
+      showMessage(`选择文件夹失败：${error.message}`, true);
+    }
+  });
+
+  document.getElementById("pick-agent-doc-dir").addEventListener("click", async () => {
+    try {
+      const current = document.getElementById("agent-doc-dir").value.trim();
+      const selected = await pickFolder(current);
+      if (selected) {
+        document.getElementById("agent-doc-dir").value = selected;
+      }
+    } catch (error) {
+      showMessage(`选择文件夹失败：${error.message}`, true);
+    }
+  });
+
   document.getElementById("save-config").addEventListener("click", onSaveConfig);
 
   loadConfig().catch((error) => {
@@ -83,4 +107,12 @@ async function api(url, options = {}) {
     return response.json();
   }
   return response.text();
+}
+
+async function pickFolder(initialDir) {
+  const result = await api("/api/system/pick-folder", {
+    method: "POST",
+    body: JSON.stringify({ initial_dir: initialDir || null }),
+  });
+  return result?.selected ? result.path : "";
 }
