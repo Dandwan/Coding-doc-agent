@@ -72,6 +72,9 @@ def test_config_read_and_update(client: tuple[TestClient, Path], tmp_path: Path)
     assert loaded["doc_paths"]["agent_doc_dir"] == "docs/agent_versions"
     assert loaded["workflow"]["proactive_push_enabled_default"] is True
     assert loaded["workflow"]["proactive_push_branch_default"] == "release/test"
+    assert "clarify_prompt_template" in loaded["prompt_settings"]
+    assert "markers" in loaded["prompt_settings"]
+    assert loaded["prompt_settings"]["markers"]["question_open"] == "<question>"
 
 
 def test_create_project_keeps_existing_files(client: tuple[TestClient, Path], tmp_path: Path) -> None:
@@ -130,6 +133,41 @@ def test_pick_folder_endpoint(client: tuple[TestClient, Path], monkeypatch: pyte
 def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Path], tmp_path: Path) -> None:
     c, _ = client
 
+    import backend.main as main  # noqa: WPS433
+
+    state = {"clarify_count": 0}
+
+    def fake_query_llm(*, api_config, prompt):
+        if "请仅用标记输出该问题选项" in prompt:
+            if "目标用户是谁" in prompt:
+                return "<option>面向内部运营人员</option><option>面向普通终端用户</option><option>双角色协作</option>"
+            return "<option>输入来自API</option><option>输入来自文件</option><option>输入来自手工录入</option>"
+
+        if "请输出 Markdown 文档" in prompt:
+            return (
+                "# 项目功能清单\n\n"
+                "- 新增需求：自动生成文档并保证方向一致\n\n"
+                "# 项目细节\n\n"
+                "## 开发步骤\n"
+                "1. 需求澄清\n"
+                "2. 模块实现\n"
+                "3. 回归测试\n\n"
+                "## 细节要求\n"
+                "- 明确输入输出\n"
+                "- 细化边界条件\n\n"
+                "# 代码架构与实现方式\n"
+                "- FastAPI + 原生前端\n"
+            )
+
+        state["clarify_count"] += 1
+        if state["clarify_count"] == 1:
+            return "<question>目标用户是谁？</question><question>输入输出边界是什么？</question>"
+        if state["clarify_count"] == 2:
+            return ""
+        return "<question>新增需求会影响哪些现有模块？</question>"
+
+    main.conversation_service._query_llm = fake_query_llm
+
     c.post(
         "/api/config",
         json={
@@ -173,10 +211,44 @@ def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Pa
     updated_session = answer_resp.json()["session"]
 
     assert len(updated_session["history"]) == 1
-    assert "# 项目功能清单" in updated_session["current_document"]
-    assert "# 项目细节" in updated_session["current_document"]
-    assert "# 代码架构与实现方式" in updated_session["current_document"]
-    assert "feature/snake-v2" in updated_session["current_document"]
+    assert updated_session["current_document"] == ""
+    assert updated_session["current_question"]["question"] == "目标用户是谁？"
+    assert len(updated_session["current_question"]["options"]) >= 1
+
+    q1_resp = c.post(
+        f"/api/projects/{project_id}/sessions/{session_id}/answer",
+        json={"selected_options": ["双角色协作"], "text_input": "", "skip_question": False},
+    )
+    assert q1_resp.status_code == 200
+    q1_session = q1_resp.json()["session"]
+    assert q1_session["current_question"]["question"] == "输入输出边界是什么？"
+
+    q2_resp = c.post(
+        f"/api/projects/{project_id}/sessions/{session_id}/answer",
+        json={"selected_options": ["输入来自API"], "text_input": "输出为Markdown", "skip_question": False},
+    )
+    assert q2_resp.status_code == 200
+    final_session = q2_resp.json()["session"]
+
+    assert "# 项目功能清单" in final_session["current_document"]
+    assert "# 项目细节" in final_session["current_document"]
+    assert "# 代码架构与实现方式" in final_session["current_document"]
+    assert final_session["ai_thinks_clear"] is True
+
+    finish_resp = c.post(f"/api/projects/{project_id}/sessions/{session_id}/finish")
+    assert finish_resp.status_code == 200
+    finished = finish_resp.json()
+    assert finished["is_complete"] is True
+    assert finished["user_confirmed_complete"] is True
+
+    reopen_resp = c.post(
+        f"/api/projects/{project_id}/sessions/{session_id}/answer",
+        json={"selected_options": [], "text_input": "新增需求：加入权限分级", "skip_question": False},
+    )
+    assert reopen_resp.status_code == 200
+    reopened = reopen_resp.json()["session"]
+    assert reopened["is_complete"] is False
+    assert reopened["current_question"]["question"] == "新增需求会影响哪些现有模块？"
 
     root_doc = folder / "AGENT_DEVELOPMENT.md"
     assert root_doc.exists()
@@ -186,7 +258,7 @@ def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Pa
     versions_resp = c.get(f"/api/projects/{project_id}/doc/versions")
     assert versions_resp.status_code == 200
     versions = versions_resp.json()
-    assert len(versions) >= 2
+    assert len(versions) >= 1
 
     source = versions[-1]["file_name"]
     compare_resp = c.get(
@@ -219,17 +291,21 @@ def test_reverify_when_new_requirements_after_complete(client: tuple[TestClient,
 
     import backend.main as main  # noqa: WPS433
 
-    calls = {"count": 0}
+    calls = {"clarify": 0}
 
-    def fake_query_llm(**kwargs):
-        calls["count"] += 1
-        return {
-            "next_question": "请补充细节",
-            "options": ["边界", "验收", "回归"],
-            "unresolved_points": [],
-            "document_markdown": "",
-            "is_complete": True,
-        }
+    def fake_query_llm(*, api_config, prompt):
+        if "请仅用标记输出该问题选项" in prompt:
+            return "<option>场景A</option><option>场景B</option><option>场景C</option>"
+
+        if "请输出 Markdown 文档" in prompt:
+            return "# 项目功能清单\n\n- 已完成\n\n# 项目细节\n\n- 已明确\n\n# 代码架构与实现方式\n\n- 待实现"
+
+        calls["clarify"] += 1
+        if calls["clarify"] == 1:
+            return "<question>请补充关键边界</question>"
+        if calls["clarify"] == 2:
+            return ""
+        return "<question>新增需求影响范围</question>"
 
     monkeypatch.setattr(main.conversation_service, "_query_llm", fake_query_llm)
 
@@ -240,23 +316,29 @@ def test_reverify_when_new_requirements_after_complete(client: tuple[TestClient,
     assert first.status_code == 200
     first_session = first.json()["session"]
     assert first_session["is_complete"] is False
+    assert first_session["current_question"]["question"] == "请补充关键边界"
 
     second_ready = c.post(
         f"/api/projects/{project_id}/sessions/{session_id}/answer",
-        json={"selected_options": ["边界"], "text_input": "补充一轮后可收敛", "skip_question": False},
+        json={"selected_options": ["场景A"], "text_input": "补充一轮后可收敛", "skip_question": False},
     )
     assert second_ready.status_code == 200
     second_ready_session = second_ready.json()["session"]
-    assert second_ready_session["is_complete"] is True
+    assert second_ready_session["is_complete"] is False
+    assert second_ready_session["ai_thinks_clear"] is True
+
+    finish_resp = c.post(f"/api/projects/{project_id}/sessions/{session_id}/finish")
+    assert finish_resp.status_code == 200
+    finished = finish_resp.json()
+    assert finished["is_complete"] is True
 
     second = c.post(
         f"/api/projects/{project_id}/sessions/{session_id}/answer",
-        json={"selected_options": ["继续细化功能"], "text_input": "新增联机排行榜需求", "skip_question": False},
+        json={"selected_options": [], "text_input": "新增联机排行榜需求", "skip_question": False},
     )
     assert second.status_code == 200
     second_session = second.json()["session"]
 
-    assert calls["count"] == 3
+    assert calls["clarify"] == 3
     assert second_session["is_complete"] is False
-    assert "新增需求影响范围确认" in second_session["unresolved_points"]
-    assert "新增需求验收标准确认" in second_session["unresolved_points"]
+    assert "新增需求影响范围" in second_session["unresolved_points"]

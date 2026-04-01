@@ -66,6 +66,29 @@ async function loadConfig() {
     config.workflow?.proactive_push_enabled_default || false;
   document.getElementById("global-proactive-push-branch").value =
     config.workflow?.proactive_push_branch_default || "";
+
+  document.getElementById("clarify-prompt-template").value =
+    config.prompt_settings?.clarify_prompt_template || "";
+  document.getElementById("options-prompt-template").value =
+    config.prompt_settings?.options_prompt_template || "";
+  document.getElementById("final-doc-prompt-template").value =
+    config.prompt_settings?.final_doc_prompt_template || "";
+
+  document.getElementById("ph-project-document").value =
+    config.prompt_settings?.placeholders?.project_document || "</projectDocument>";
+  document.getElementById("ph-user-input").value =
+    config.prompt_settings?.placeholders?.user_input || "</userInput>";
+  document.getElementById("ph-question-and-input").value =
+    config.prompt_settings?.placeholders?.question_and_input || "</questionAndInput>";
+
+  document.getElementById("marker-question-open").value =
+    config.prompt_settings?.markers?.question_open || "<question>";
+  document.getElementById("marker-question-close").value =
+    config.prompt_settings?.markers?.question_close || "</question>";
+  document.getElementById("marker-option-open").value =
+    config.prompt_settings?.markers?.option_open || "<option>";
+  document.getElementById("marker-option-close").value =
+    config.prompt_settings?.markers?.option_close || "</option>";
 }
 
 async function onSaveConfig() {
@@ -87,10 +110,39 @@ async function onSaveConfig() {
       proactive_push_enabled_default: document.getElementById("global-proactive-push-enabled").checked,
       proactive_push_branch_default: document.getElementById("global-proactive-push-branch").value.trim(),
     },
+    prompt_settings: {
+      clarify_prompt_template: document.getElementById("clarify-prompt-template").value,
+      options_prompt_template: document.getElementById("options-prompt-template").value,
+      final_doc_prompt_template: document.getElementById("final-doc-prompt-template").value,
+      placeholders: {
+        project_document: document.getElementById("ph-project-document").value.trim(),
+        user_input: document.getElementById("ph-user-input").value.trim(),
+        question_and_input: document.getElementById("ph-question-and-input").value.trim(),
+      },
+      markers: {
+        question_open: document.getElementById("marker-question-open").value.trim(),
+        question_close: document.getElementById("marker-question-close").value.trim(),
+        option_open: document.getElementById("marker-option-open").value.trim(),
+        option_close: document.getElementById("marker-option-close").value.trim(),
+      },
+    },
   };
 
   if (!payload.projects_root) {
     showMessage("默认项目根目录不能为空", true);
+    return;
+  }
+
+  if (!payload.prompt_settings.clarify_prompt_template.trim()) {
+    showMessage("请填写“识别需求不清晰点提示词”", true);
+    return;
+  }
+  if (!payload.prompt_settings.options_prompt_template.trim()) {
+    showMessage("请填写“生成选项提示词”", true);
+    return;
+  }
+  if (!payload.prompt_settings.final_doc_prompt_template.trim()) {
+    showMessage("请填写“生成最终文档提示词”", true);
     return;
   }
 

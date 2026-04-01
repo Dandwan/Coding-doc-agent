@@ -82,6 +82,52 @@
           <input id="global-proactive-push-branch" type="text" placeholder="例如：main / release/v1" />
         </label>
 
+        <h3>提示词设置</h3>
+        <label>
+          1) 识别需求不清晰点提示词
+          <textarea id="clarify-prompt-template" placeholder="用于指导 AI 识别需求歧义"></textarea>
+        </label>
+        <label>
+          2) 生成选项提示词
+          <textarea id="options-prompt-template" placeholder="用于指导 AI 生成选项"></textarea>
+        </label>
+        <label>
+          3) 生成最终 Agent 开发文档提示词
+          <textarea id="final-doc-prompt-template" placeholder="用于指导 AI 生成最终 Markdown 文档"></textarea>
+        </label>
+
+        <h3>替换符设置</h3>
+        <label>
+          项目开发文档替换符
+          <input id="ph-project-document" type="text" />
+        </label>
+        <label>
+          用户输入替换符
+          <input id="ph-user-input" type="text" />
+        </label>
+        <label>
+          历史问答替换符
+          <input id="ph-question-and-input" type="text" />
+        </label>
+
+        <h3>标识符设置</h3>
+        <label>
+          问题开始标识
+          <input id="marker-question-open" type="text" />
+        </label>
+        <label>
+          问题结束标识
+          <input id="marker-question-close" type="text" />
+        </label>
+        <label>
+          选项开始标识
+          <input id="marker-option-open" type="text" />
+        </label>
+        <label>
+          选项结束标识
+          <input id="marker-option-close" type="text" />
+        </label>
+
         <div class="actions">
           <button id="save-config" class="teal">保存设置</button>
         </div>

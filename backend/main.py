@@ -214,8 +214,9 @@ def create_session(project_id: str, payload: SessionCreateRequest) -> dict:
         root_agent_doc_path=Path(str(project.get("root_agent_doc_path", "AGENT_DEVELOPMENT.md"))).name,
     )
 
-    version_name = _version_manager(project).save_version(session["current_document"])
-    session["current_version"] = version_name
+    if str(session.get("current_document", "")).strip():
+        version_name = _version_manager(project).save_version(session["current_document"])
+        session["current_version"] = version_name
     saved = manager.save_session(session["id"], session)
     return saved
 
@@ -264,10 +265,30 @@ def answer(project_id: str, session_id: str, payload: AnswerRequest) -> dict:
         raise HTTPException(status_code=404, detail="会话不存在") from None
 
     updated = conversation_service.process_answer(project, session, payload.model_dump())
-    version_name = _version_manager(project).save_version(updated.get("current_document", ""))
-    updated["current_version"] = version_name
+    if str(updated.get("current_document", "")).strip():
+        version_name = _version_manager(project).save_version(updated.get("current_document", ""))
+        updated["current_version"] = version_name
     saved = manager.save_session(session_id, updated)
     return {"session": saved}
+
+
+@app.post("/api/projects/{project_id}/sessions/{session_id}/finish")
+def finish_session(project_id: str, session_id: str) -> dict:
+    project = _project_or_404(project_id)
+    manager = _session_manager(project)
+
+    try:
+        session = manager.get_session(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="会话不存在") from None
+
+    finished = conversation_service.finish_session(session)
+    if str(finished.get("current_document", "")).strip():
+        version_name = _version_manager(project).save_version(finished.get("current_document", ""))
+        finished["current_version"] = version_name
+
+    saved = manager.save_session(session_id, finished)
+    return saved
 
 
 @app.get("/api/projects/{project_id}/doc/versions")

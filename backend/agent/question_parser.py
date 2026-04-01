@@ -5,6 +5,50 @@ import re
 from typing import Any
 
 
+def parse_tag_values(text: str, open_tag: str, close_tag: str) -> list[str]:
+    if not open_tag or not close_tag:
+        return []
+
+    pattern = re.compile(re.escape(open_tag) + r"(.*?)" + re.escape(close_tag), re.DOTALL)
+    values = [match.strip() for match in pattern.findall(text) if str(match).strip()]
+    return values
+
+
+def parse_questions_and_options(
+    text: str,
+    *,
+    question_open: str,
+    question_close: str,
+    option_open: str,
+    option_close: str,
+) -> list[dict[str, Any]]:
+    if not text.strip() or not question_open or not question_close:
+        return []
+
+    q_token = re.escape(question_open) + r".*?" + re.escape(question_close)
+    o_token = re.escape(option_open) + r".*?" + re.escape(option_close)
+    token_pattern = re.compile(f"({q_token}|{o_token})", re.DOTALL)
+
+    parsed: list[dict[str, Any]] = []
+    current_index = -1
+
+    for token_match in token_pattern.finditer(text):
+        token = token_match.group(0)
+        if token.startswith(question_open):
+            question_text = _strip_wrapped(token, question_open, question_close)
+            if question_text:
+                parsed.append({"question": question_text, "options": []})
+                current_index = len(parsed) - 1
+            continue
+
+        if token.startswith(option_open) and current_index >= 0:
+            option_text = _strip_wrapped(token, option_open, option_close)
+            if option_text:
+                parsed[current_index]["options"].append(option_text)
+
+    return parsed
+
+
 def parse_llm_json(raw_text: str) -> dict[str, Any]:
     cleaned = raw_text.strip()
     if cleaned.startswith("```"):
@@ -66,3 +110,10 @@ def _try_load_json(text: str) -> dict[str, Any] | None:
         return loaded if isinstance(loaded, dict) else None
     except json.JSONDecodeError:
         return None
+
+
+def _strip_wrapped(token: str, open_tag: str, close_tag: str) -> str:
+    value = token[len(open_tag) :]
+    if value.endswith(close_tag):
+        value = value[: -len(close_tag)]
+    return value.strip()

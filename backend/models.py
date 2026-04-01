@@ -24,11 +24,33 @@ class WorkflowSettings(BaseModel):
     proactive_push_branch_default: str = ""
 
 
+class PromptPlaceholderSettings(BaseModel):
+    project_document: str = "</projectDocument>"
+    user_input: str = "</userInput>"
+    question_and_input: str = "</questionAndInput>"
+
+
+class PromptMarkerSettings(BaseModel):
+    question_open: str = "<question>"
+    question_close: str = "</question>"
+    option_open: str = "<option>"
+    option_close: str = "</option>"
+
+
+class PromptSettings(BaseModel):
+    clarify_prompt_template: str
+    options_prompt_template: str
+    final_doc_prompt_template: str
+    placeholders: PromptPlaceholderSettings
+    markers: PromptMarkerSettings
+
+
 class AppConfig(BaseModel):
     projects_root: str
     api: APISettings
     doc_paths: DocPathSettings
     workflow: WorkflowSettings
+    prompt_settings: PromptSettings
 
 
 class AppConfigUpdate(BaseModel):
@@ -36,6 +58,7 @@ class AppConfigUpdate(BaseModel):
     api: Optional[dict[str, Any]] = None
     doc_paths: Optional[dict[str, Any]] = None
     workflow: Optional[dict[str, Any]] = None
+    prompt_settings: Optional[dict[str, Any]] = None
 
 
 class ProjectCreateRequest(BaseModel):
@@ -105,6 +128,7 @@ class SessionDetail(BaseModel):
     current_document: str
     is_complete: bool
     current_version: Optional[str] = None
+    ai_thinks_clear: bool = False
 
 
 class AnswerRequest(BaseModel):

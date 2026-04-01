@@ -30,6 +30,41 @@ class ConfigManager:
                 "proactive_push_enabled_default": False,
                 "proactive_push_branch_default": "",
             },
+            "prompt_settings": {
+                "clarify_prompt_template": (
+                    "你是需求澄清助手。请基于以下上下文，识别仍不清晰且可能导致开发方向偏差的细节。"
+                    "如果存在不清晰点，请仅使用标识符输出问题，格式为 <question>问题内容</question>。"
+                    "若无不清晰点，不要输出任何 <question> 标签。\n\n"
+                    "项目开发文档:\n</projectDocument>\n\n"
+                    "用户本轮输入:\n</userInput>\n\n"
+                    "历史问答:\n</questionAndInput>"
+                ),
+                "options_prompt_template": (
+                    "你是需求澄清助手。请针对给定问题生成可供用户选择的选项。"
+                    "仅使用 <option>选项内容</option> 输出，建议 3-5 条，互斥且可执行。\n\n"
+                    "项目开发文档:\n</projectDocument>\n\n"
+                    "用户本轮输入:\n</userInput>\n\n"
+                    "历史问答:\n</questionAndInput>"
+                ),
+                "final_doc_prompt_template": (
+                    "你是技术负责人。请基于上下文生成最终 Markdown 格式 Agent 开发文档，"
+                    "必须包含：将要开发的新功能、开发步骤、细节要求。\n\n"
+                    "项目开发文档:\n</projectDocument>\n\n"
+                    "用户本轮输入:\n</userInput>\n\n"
+                    "历史问答:\n</questionAndInput>"
+                ),
+                "placeholders": {
+                    "project_document": "</projectDocument>",
+                    "user_input": "</userInput>",
+                    "question_and_input": "</questionAndInput>",
+                },
+                "markers": {
+                    "question_open": "<question>",
+                    "question_close": "</question>",
+                    "option_open": "<option>",
+                    "option_close": "</option>",
+                },
+            },
         }
 
     def load(self) -> dict[str, Any]:

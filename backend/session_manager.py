@@ -57,9 +57,12 @@ class SessionManager:
             "updated_at": now,
             "history": [],
             "unresolved_points": [],
+            "pending_questions": [],
             "current_question": first_question,
             "current_document": "",
+            "ai_thinks_clear": False,
             "is_complete": False,
+            "user_confirmed_complete": False,
             "current_version": None,
             "requirement_seeded": False,
         }

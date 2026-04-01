@@ -38,6 +38,7 @@ function bindStaticActions() {
   document.getElementById("delete-session").addEventListener("click", deleteSession);
   document.getElementById("submit-answer").addEventListener("click", () => submitAnswer(false));
   document.getElementById("skip-question").addEventListener("click", () => submitAnswer(true));
+  document.getElementById("finish-session").addEventListener("click", finishSession);
   document.getElementById("save-project-settings").addEventListener("click", saveProjectSettings);
   document.getElementById("pick-project-folder-path").addEventListener("click", onPickProjectFolderPath);
   document.getElementById("pick-project-doc-folder").addEventListener("click", onPickProjectDocFolder);
@@ -132,7 +133,7 @@ async function createSession() {
   await loadProject();
   await loadVersions();
   await loadSession(created.id);
-  showMessage("会话已创建", false);
+  showMessage("会话已创建，请先直接输入你的需求。", false);
 }
 
 async function renameSession() {
@@ -223,10 +224,19 @@ function renderSessionView() {
   questionText.textContent = state.currentSession.current_question?.question || "请继续补充需求";
   renderOptions(state.currentSession.current_question?.options || []);
 
-  for (const item of state.currentSession.unresolved_points || []) {
+  const unresolved = state.currentSession.unresolved_points || [];
+  if (!unresolved.length) {
     const li = document.createElement("li");
-    li.textContent = item;
+    li.textContent = state.currentSession.ai_thinks_clear
+      ? "当前轮次 AI 未发现新的歧义点。"
+      : "当前无待澄清项，提交输入后由 AI 继续识别。";
     unresolvedList.appendChild(li);
+  } else {
+    for (const item of unresolved) {
+      const li = document.createElement("li");
+      li.textContent = item;
+      unresolvedList.appendChild(li);
+    }
   }
 
   const history = state.currentSession.history || [];
@@ -320,6 +330,27 @@ async function submitAnswer(skipQuestion) {
   renderSessionView();
   selectCurrentVersion();
   showMessage("回答已提交并生成新版本", false);
+}
+
+async function finishSession() {
+  if (!state.currentSession) {
+    showMessage("请先选择会话", true);
+    return;
+  }
+
+  const result = await api(
+    `/api/projects/${encodeURIComponent(state.projectId)}/sessions/${encodeURIComponent(state.currentSession.id)}/finish`,
+    {
+      method: "POST",
+    }
+  );
+
+  state.currentSession = result;
+  await loadProject();
+  await loadVersions();
+  renderSessions();
+  renderSessionView();
+  showMessage("会话已标记完成并保存。", false);
 }
 
 async function loadVersions() {
