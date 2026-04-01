@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DocAgent | 全局设置</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Sora:wght@400;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div class="brand">
+          <h1>DocAgent · 全局设置</h1>
+          <p>配置项目根目录、API 端点与文档路径规则</p>
+        </div>
+        <div class="toolbar">
+          <button id="go-home" class="secondary">返回主页</button>
+        </div>
+      </header>
+
+      <main class="panel stack">
+        <label>
+          默认项目根目录
+          <input id="projects-root" type="text" />
+        </label>
+
+        <h3>API 配置</h3>
+        <label>
+          API URL
+          <input id="api-url" type="text" />
+        </label>
+        <label>
+          API Key
+          <input id="api-key" type="password" />
+        </label>
+        <label>
+          模型名称
+          <input id="api-model" type="text" />
+        </label>
+        <label>
+          Temperature
+          <input id="api-temperature" type="number" step="0.1" min="0" max="2" />
+        </label>
+        <label>
+          Timeout（秒）
+          <input id="api-timeout" type="number" min="5" max="600" />
+        </label>
+        <label>
+          重试次数
+          <input id="api-retries" type="number" min="1" max="8" />
+        </label>
+
+        <h3>文档路径规则</h3>
+        <label>
+          项目开发文档路径（project_doc）
+          <input id="project-doc-path" type="text" />
+        </label>
+        <label>
+          Agent 开发文档目录（agent_doc_dir）
+          <input id="agent-doc-dir" type="text" />
+        </label>
+
+        <div class="actions">
+          <button id="save-config" class="teal">保存设置</button>
+        </div>
+        <div id="settings-message" class="message"></div>
+      </main>
+    </div>
+
+    <script src="/assets/settings.js"></script>
+  </body>
+</html>

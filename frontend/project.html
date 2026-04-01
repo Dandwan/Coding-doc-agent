@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DocAgent | 项目工作区</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Sora:wght@400;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div class="brand">
+          <h1 id="project-title">DocAgent · 项目工作区</h1>
+          <p id="project-subtitle">正在加载项目信息...</p>
+        </div>
+        <div class="toolbar">
+          <button id="go-home" class="secondary">返回主页</button>
+          <button id="open-folder-btn" class="ghost">打开项目文件夹</button>
+          <button id="go-settings" class="teal">全局设置</button>
+        </div>
+      </header>
+
+      <main class="workspace-grid">
+        <section class="panel stack">
+          <div class="actions">
+            <button id="create-session">新建会话</button>
+            <button id="rename-session" class="secondary">重命名</button>
+            <button id="delete-session" class="danger">删除</button>
+          </div>
+          <div id="session-list" class="session-list"></div>
+        </section>
+
+        <section class="panel stack">
+          <h2>需求澄清</h2>
+          <div class="question-box">
+            <strong id="question-text">请先选择一个会话开始。</strong>
+            <div id="options-list" class="options-list"></div>
+          </div>
+
+          <label>
+            <span id="extra-label">其他：</span>
+            <textarea id="extra-input" placeholder="补充说明（可选）"></textarea>
+          </label>
+
+          <div class="actions">
+            <button id="submit-answer" class="teal">确认提交</button>
+            <button id="skip-question" class="ghost">我认为这个问题不需要回答</button>
+          </div>
+
+          <div>
+            <h3>待解决问题清单</h3>
+            <ul id="unresolved-list" class="unresolved-list"></ul>
+          </div>
+
+          <div>
+            <h3>最近对话</h3>
+            <ul id="history-list" class="history-list"></ul>
+          </div>
+
+          <div id="project-message" class="message"></div>
+        </section>
+
+        <section class="panel stack">
+          <h2>Agent 开发文档</h2>
+          <div class="version-row">
+            <select id="version-select"></select>
+            <button id="view-version" class="secondary">查看</button>
+            <button id="compare-version" class="ghost">对比</button>
+            <button id="restore-version" class="danger">恢复</button>
+          </div>
+          <article id="doc-preview" class="doc-preview"></article>
+          <pre id="diff-preview" class="diff-preview"></pre>
+
+          <h3>项目设置</h3>
+          <label>
+            项目名称
+            <input id="project-name-input" type="text" />
+          </label>
+          <label>
+            项目开发文档路径（可覆盖全局）
+            <input id="project-doc-path" type="text" />
+          </label>
+          <label>
+            项目文件夹路径（迁移 managed 文件）
+            <input id="project-folder-path" type="text" />
+          </label>
+          <button id="save-project-settings" class="teal">保存项目设置</button>
+        </section>
+      </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="/assets/project.js"></script>
+  </body>
+</html>

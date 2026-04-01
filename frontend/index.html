@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DocAgent | 项目管理</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Sora:wght@400;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div class="brand">
+          <h1>DocAgent · 项目总览</h1>
+          <p>管理项目、创建工作区、进入会话澄清需求并输出开发文档</p>
+        </div>
+        <div class="toolbar">
+          <button id="open-settings" class="teal">全局设置</button>
+        </div>
+      </header>
+
+      <main class="main-grid">
+        <section class="panel">
+          <h2>新建项目</h2>
+          <form id="create-project-form" class="stack">
+            <label>
+              项目名称
+              <input id="project-name" type="text" placeholder="例如：客服自动化工具" required />
+            </label>
+            <label>
+              项目文件夹路径
+              <input id="project-folder" type="text" placeholder="可留空，自动使用全局项目根目录" />
+            </label>
+            <label class="checkbox-line">
+              <input id="use-default-folder" type="checkbox" checked />
+              使用全局项目根目录自动创建子目录
+            </label>
+            <button type="submit">创建项目</button>
+            <div id="create-message" class="message"></div>
+          </form>
+        </section>
+
+        <section class="panel">
+          <h2>项目列表</h2>
+          <div id="projects-list" class="project-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/assets/script.js"></script>
+  </body>
+</html>
