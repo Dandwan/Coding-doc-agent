@@ -7,7 +7,11 @@ from typing import Any
 from backend.agent.question_parser import parse_questions_and_options, parse_tag_values
 from backend.api.llm_client import LLMClient
 from backend.config_manager import ConfigManager
-from backend.document.generator import ensure_required_sections, generate_document_from_context
+from backend.document.generator import (
+    apply_contextual_instructions,
+    ensure_required_sections,
+    generate_document_from_context,
+)
 from backend.document.loader import load_project_document
 from backend.logging_manager import get_logger
 from backend.utils.file_utils import now_iso
@@ -152,6 +156,15 @@ class ConversationService:
                     root_agent_doc_path=Path(root_agent_doc_path).name,
                 )
             current_document = ensure_required_sections(current_document, previous_document=previous_document)
+            current_document = apply_contextual_instructions(
+                current_document,
+                project_name=project.get("name", "未命名项目"),
+                history=history,
+                config=config,
+                project_doc_path=project_doc_path,
+                proactive_push_enabled=proactive_push_enabled,
+                proactive_push_branch=proactive_push_branch,
+            )
 
             session["pending_questions"] = []
             session["current_question"] = {
@@ -186,6 +199,8 @@ class ConversationService:
         prompt_settings = self._get_prompt_settings(config)
         project_doc_path = project.get("project_doc_path") or config["doc_paths"]["project_doc"]
         project_doc_content = load_project_document(project["folder"], project_doc_path) or ""
+        proactive_push_enabled = bool(project.get("proactive_push_enabled", False))
+        proactive_push_branch = str(project.get("proactive_push_branch", "")).strip()
 
         session_context_text = self._build_session_context_text(
             session_name=str(session.get("name", "当前会话")),
@@ -219,7 +234,18 @@ class ConversationService:
             )
             return session
 
-        session["current_document"] = ensure_required_sections(final_document, previous_document=previous_document)
+        final_document = ensure_required_sections(final_document, previous_document=previous_document)
+        final_document = apply_contextual_instructions(
+            final_document,
+            project_name=project.get("name", "未命名项目"),
+            history=history,
+            config=config,
+            project_doc_path=project_doc_path,
+            proactive_push_enabled=proactive_push_enabled,
+            proactive_push_branch=proactive_push_branch,
+        )
+
+        session["current_document"] = final_document
         session["is_complete"] = True
         session["ai_thinks_clear"] = True
         session["user_confirmed_complete"] = True

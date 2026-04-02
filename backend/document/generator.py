@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import logging
+import re
 from typing import Any
+
+
+DEFAULT_PROJECT_DOC_PATTERN = "docs/project/PROJECT.md"
+AUTO_BLOCK_START = "<!-- DOCAGENT_AUTO_INSTRUCTIONS_START -->"
+AUTO_BLOCK_END = "<!-- DOCAGENT_AUTO_INSTRUCTIONS_END -->"
 
 
 def generate_initial_document(
@@ -63,6 +70,86 @@ def generate_initial_document(
 
 > 当前项目：{project_name}
 """
+
+
+def apply_contextual_instructions(
+    content: str,
+    *,
+    project_name: str,
+    history: list[dict[str, Any]],
+    config: dict[str, Any] | None,
+    project_doc_path: str = "",
+    proactive_push_enabled: bool = False,
+    proactive_push_branch: str = "",
+) -> str:
+    intent_text = _collect_user_intent_text(history)
+    should_add_update = _should_add_update_project_doc_instruction(intent_text)
+    should_add_proactive = _should_add_proactive_push_instruction(intent_text)
+
+    instructions: list[str] = []
+
+    if should_add_update:
+        resolved_project_doc = resolve_project_doc_path(
+            project_name=project_name,
+            config=config,
+            project_doc_path=project_doc_path,
+        )
+        instructions.append(
+            "- 要求Agent更新项目开发文档，其路径为："
+            f"`{resolved_project_doc}`。"
+            "更新后的文档应至少包含“项目概述”、“项目详细介绍”、“项目架构”、“已实现的功能清单”等关键部分，"
+            "并依据开发实际情况进行更新维护。"
+        )
+
+    if should_add_proactive and proactive_push_enabled:
+        branch = resolve_proactive_push_branch(proactive_push_branch=proactive_push_branch, config=config)
+        if branch:
+            instructions.append(
+                "- 要求Agent执行积极上传，在完成一个功能后自动将变更推送到 "
+                f"{branch} 分支。"
+            )
+        else:
+            instructions.append("- 要求Agent执行积极上传，在完成一个功能后自动推送变更。")
+
+    return _merge_auto_instruction_block(content, instructions)
+
+
+def resolve_project_doc_path(
+    *,
+    project_name: str,
+    config: dict[str, Any] | None,
+    project_doc_path: str = "",
+) -> str:
+    logger = logging.getLogger("docagent.system")
+
+    path_pattern = str(project_doc_path or "").strip()
+    if not path_pattern:
+        try:
+            path_pattern = str((config or {}).get("doc_paths", {}).get("project_doc", "")).strip()
+        except Exception as exc:
+            logger.warning("resolve_project_doc_path_failed_to_read_config error=%s", exc)
+            path_pattern = ""
+
+    if not path_pattern:
+        path_pattern = DEFAULT_PROJECT_DOC_PATTERN
+
+    project_token = _normalize_project_name_for_path(project_name)
+    try:
+        return path_pattern.replace("PROJECT", project_token)
+    except Exception as exc:
+        logger.warning("resolve_project_doc_path_failed_to_format path_pattern=%s error=%s", path_pattern, exc)
+        return DEFAULT_PROJECT_DOC_PATTERN.replace("PROJECT", project_token)
+
+
+def resolve_proactive_push_branch(*, proactive_push_branch: str, config: dict[str, Any] | None) -> str:
+    branch = str(proactive_push_branch or "").strip()
+    if branch:
+        return branch
+
+    try:
+        return str((config or {}).get("workflow", {}).get("proactive_push_branch_default", "")).strip()
+    except Exception:
+        return ""
 
 
 def generate_document_from_context(
@@ -202,3 +289,90 @@ def _build_proactive_push_lines(proactive_push_enabled: bool, proactive_push_bra
         "- 已启用“积极上传”：开发项目的 Agent 每完成一个新功能，必须立即提交并上传远程仓库。\n"
         "- 未指定分支时，不强制强调分支名称。"
     )
+
+
+def _collect_user_intent_text(history: list[dict[str, Any]]) -> str:
+    pieces: list[str] = []
+    for turn in history:
+        answer = str(turn.get("answer", "")).strip()
+        if answer:
+            pieces.append(answer)
+
+        text_input = str(turn.get("text_input", "")).strip()
+        if text_input:
+            pieces.append(text_input)
+
+        selected_options = turn.get("selected_options", [])
+        if isinstance(selected_options, list):
+            for option in selected_options:
+                normalized = str(option).strip()
+                if normalized:
+                    pieces.append(normalized)
+
+    return "\n".join(pieces)
+
+
+def _should_add_update_project_doc_instruction(text: str) -> bool:
+    if not text.strip():
+        return False
+
+    if re.search(r"(不要|不需要|无需|不用|不必).{0,10}(更新|维护).{0,10}项目开发文档", text):
+        return False
+
+    patterns = [
+        r"(更新|维护|回写|同步).{0,10}项目开发文档",
+        r"项目开发文档.{0,10}(更新|维护|回写|同步)",
+    ]
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _should_add_proactive_push_instruction(text: str) -> bool:
+    if not text.strip():
+        return False
+
+    if re.search(r"(不要|不需要|无需|不用|不必|关闭|取消).{0,10}(积极上传|自动推送|上传)", text):
+        return False
+
+    patterns = [
+        r"积极上传",
+        r"(自动|主动).{0,6}(推送|上传)",
+        r"完成一个功能后.{0,8}(推送|上传)",
+    ]
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _normalize_project_name_for_path(project_name: str) -> str:
+    normalized = str(project_name or "").strip() or "PROJECT"
+    normalized = re.sub(r"[\\/:*?\"<>|]", "-", normalized)
+    normalized = re.sub(r"\s+", "-", normalized)
+    return normalized
+
+
+def _merge_auto_instruction_block(content: str, instructions: list[str]) -> str:
+    cleaned_content, had_block = _remove_auto_instruction_block(content)
+
+    if not instructions:
+        return cleaned_content if had_block else content
+
+    block = "\n".join(
+        [
+            AUTO_BLOCK_START,
+            "## Agent执行附加指令",
+            *instructions,
+            AUTO_BLOCK_END,
+        ]
+    )
+
+    base = cleaned_content.rstrip()
+    if not base:
+        return block + "\n"
+    return base + "\n\n" + block + "\n"
+
+
+def _remove_auto_instruction_block(content: str) -> tuple[str, bool]:
+    pattern = re.compile(
+        re.escape(AUTO_BLOCK_START) + r".*?" + re.escape(AUTO_BLOCK_END),
+        re.DOTALL,
+    )
+    cleaned, count = pattern.subn("", content)
+    return cleaned.strip() + ("\n" if cleaned.strip() else ""), count > 0
