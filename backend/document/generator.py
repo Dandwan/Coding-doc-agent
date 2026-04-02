@@ -6,6 +6,7 @@ from typing import Any
 
 
 DEFAULT_PROJECT_DOC_PATTERN = "docs/project/PROJECT.md"
+DEFAULT_PROACTIVE_PUSH_INSTRUCTION = "请你积极上传，每当开发完一个功能，则进行一次上传"
 AUTO_BLOCK_START = "<!-- DOCAGENT_AUTO_INSTRUCTIONS_START -->"
 AUTO_BLOCK_END = "<!-- DOCAGENT_AUTO_INSTRUCTIONS_END -->"
 
@@ -92,7 +93,6 @@ def apply_contextual_instructions(
         resolved_project_doc = resolve_project_doc_path(
             project_name=project_name,
             config=config,
-            project_doc_path=project_doc_path,
         )
         instructions.append(
             "- 要求Agent更新项目开发文档，其路径为："
@@ -102,14 +102,8 @@ def apply_contextual_instructions(
         )
 
     if should_add_proactive and proactive_push_enabled:
-        branch = resolve_proactive_push_branch(proactive_push_branch=proactive_push_branch, config=config)
-        if branch:
-            instructions.append(
-                "- 要求Agent执行积极上传，在完成一个功能后自动将变更推送到 "
-                f"{branch} 分支。"
-            )
-        else:
-            instructions.append("- 要求Agent执行积极上传，在完成一个功能后自动推送变更。")
+        push_instruction = resolve_proactive_push_instruction(config=config)
+        instructions.append(f"- {push_instruction}")
 
     return _merge_auto_instruction_block(content, instructions)
 
@@ -122,13 +116,13 @@ def resolve_project_doc_path(
 ) -> str:
     logger = logging.getLogger("docagent.system")
 
-    path_pattern = str(project_doc_path or "").strip()
-    if not path_pattern:
-        try:
-            path_pattern = str((config or {}).get("doc_paths", {}).get("project_doc", "")).strip()
-        except Exception as exc:
-            logger.warning("resolve_project_doc_path_failed_to_read_config error=%s", exc)
-            path_pattern = ""
+    path_pattern = ""
+    try:
+        # AGENT_DEVELOPMENT.md 指令路径仅从全局配置 doc_paths.project_doc 读取。
+        path_pattern = str((config or {}).get("doc_paths", {}).get("project_doc", "")).strip()
+    except Exception as exc:
+        logger.warning("resolve_project_doc_path_failed_to_read_config error=%s", exc)
+        path_pattern = ""
 
     if not path_pattern:
         path_pattern = DEFAULT_PROJECT_DOC_PATTERN
@@ -150,6 +144,14 @@ def resolve_proactive_push_branch(*, proactive_push_branch: str, config: dict[st
         return str((config or {}).get("workflow", {}).get("proactive_push_branch_default", "")).strip()
     except Exception:
         return ""
+
+
+def resolve_proactive_push_instruction(*, config: dict[str, Any] | None) -> str:
+    try:
+        instruction = str((config or {}).get("workflow", {}).get("proactive_push_instruction", "")).strip()
+    except Exception:
+        instruction = ""
+    return instruction or DEFAULT_PROACTIVE_PUSH_INSTRUCTION
 
 
 def generate_document_from_context(

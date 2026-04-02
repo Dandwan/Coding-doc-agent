@@ -6,13 +6,21 @@ from typing import Any
 from backend.utils.file_utils import ensure_dir, merge_dict, read_json, write_json
 
 
+DEFAULT_PROACTIVE_PUSH_INSTRUCTION = "请你积极上传，每当开发完一个功能，则进行一次上传"
+
+
 class ConfigManager:
     def __init__(self) -> None:
         self.config_dir = ensure_dir(Path.home() / ".docagent")
         self.config_path = self.config_dir / "config.json"
         self.projects_index_path = self.config_dir / "projects.json"
+        self.software_root = Path(__file__).resolve().parent.parent
+        self.default_template_path = self.software_root / "default_settings" / "config.default.json"
 
-        self.default_config: dict[str, Any] = {
+        self.default_config: dict[str, Any] = self._load_default_template()
+
+    def _build_builtin_default_config(self) -> dict[str, Any]:
+        return {
             "projects_root": str((Path.home() / "DocAgentProjects").resolve()),
             "api": {
                 "url": "https://api.openai.com/v1/chat/completions",
@@ -22,6 +30,9 @@ class ConfigManager:
                 "timeout": 60,
                 "max_retries": 2,
             },
+            "generation": {
+                "concurrent_workers": 5,
+            },
             "doc_paths": {
                 "project_doc": "docs/project/PROJECT.md",
                 "agent_doc_dir": "docs/agent",
@@ -29,6 +40,7 @@ class ConfigManager:
             "workflow": {
                 "proactive_push_enabled_default": False,
                 "proactive_push_branch_default": "",
+                "proactive_push_instruction": DEFAULT_PROACTIVE_PUSH_INSTRUCTION,
             },
             "logging": {
                 "root_dir": str((Path.home() / ".docagent" / "logs").resolve()),
@@ -72,7 +84,25 @@ class ConfigManager:
             },
         }
 
+    def _load_default_template(self) -> dict[str, Any]:
+        builtin = self._build_builtin_default_config()
+        template = read_json(self.default_template_path, {})
+        if isinstance(template, dict) and template:
+            return merge_dict(builtin, template)
+        return builtin
+
+    def _ensure_user_config_exists(self) -> None:
+        if self.config_path.exists():
+            return
+
+        template = read_json(self.default_template_path, {})
+        if not isinstance(template, dict) or not template:
+            template = self.default_config
+
+        write_json(self.config_path, template)
+
     def load(self) -> dict[str, Any]:
+        self._ensure_user_config_exists()
         config = read_json(self.config_path, {})
         merged = merge_dict(self.default_config, config)
         if merged != config:

@@ -14,6 +14,10 @@ class APISettings(BaseModel):
     max_retries: int = 2
 
 
+class GenerationSettings(BaseModel):
+    concurrent_workers: int = Field(default=5, ge=1, le=20)
+
+
 class DocPathSettings(BaseModel):
     project_doc: str = "docs/project/PROJECT.md"
     agent_doc_dir: str = "docs/agent"
@@ -22,6 +26,7 @@ class DocPathSettings(BaseModel):
 class WorkflowSettings(BaseModel):
     proactive_push_enabled_default: bool = False
     proactive_push_branch_default: str = ""
+    proactive_push_instruction: str = "请你积极上传，每当开发完一个功能，则进行一次上传"
 
 
 class LoggingSettings(BaseModel):
@@ -54,6 +59,7 @@ class PromptSettings(BaseModel):
 class AppConfig(BaseModel):
     projects_root: str
     api: APISettings
+    generation: GenerationSettings
     doc_paths: DocPathSettings
     workflow: WorkflowSettings
     logging: LoggingSettings
@@ -63,6 +69,7 @@ class AppConfig(BaseModel):
 class AppConfigUpdate(BaseModel):
     projects_root: Optional[str] = None
     api: Optional[dict[str, Any]] = None
+    generation: Optional[dict[str, Any]] = None
     doc_paths: Optional[dict[str, Any]] = None
     workflow: Optional[dict[str, Any]] = None
     logging: Optional[dict[str, Any]] = None

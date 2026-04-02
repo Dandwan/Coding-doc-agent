@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +130,14 @@ class ConversationService:
             return session
 
         if questions:
+            if history:
+                history[-1]["options"] = [
+                    {
+                        "question": str(item.get("question", "")).strip(),
+                        "options": list(item.get("options", [])),
+                    }
+                    for item in questions
+                ]
             session["pending_questions"] = questions
             session["current_question"] = questions[0]
             session["unresolved_points"] = [item.get("question", "") for item in questions if item.get("question")]
@@ -310,35 +319,17 @@ class ConversationService:
                 option_close=option_close,
             )
 
-            questions: list[dict[str, Any]] = []
-            for question_item in parsed_questions:
-                question = str(question_item.get("question", "")).strip()
-                if not question:
-                    continue
-
-                options_prompt = self._render_template(
-                    str(prompt_settings.get("options_prompt_template", "")),
-                    placeholders=placeholders,
-                    project_document=project_doc_content,
-                    user_input=user_input,
-                    question_and_input=f"{qa_text}\n\n[当前问题]\n{question}",
-                )
-                options_prompt += (
-                    f"\n\n请仅用标记输出该问题选项："
-                    f"{option_open}选项文本{option_close}。"
-                )
-                options_raw = self._query_llm(
-                    api_config=config.get("api", {}),
-                    prompt=options_prompt,
-                    stage="options",
-                    project_id=project_id,
-                    session_id=session_id,
-                )
-                options = parse_tag_values(options_raw, option_open, option_close)
-                if not options:
-                    options = [str(item).strip() for item in question_item.get("options", []) if str(item).strip()]
-
-                questions.append({"question": question, "options": options[:6]})
+            questions = self._generate_options_in_parallel(
+                config=config,
+                prompt_settings=prompt_settings,
+                placeholders=placeholders,
+                parsed_questions=parsed_questions,
+                qa_text=qa_text,
+                option_open=option_open,
+                option_close=option_close,
+                project_id=project_id,
+                session_id=session_id,
+            )
 
             if questions:
                 return {"questions": questions, "document_markdown": "", "error": ""}
@@ -361,6 +352,136 @@ class ConversationService:
                 session_id,
             )
             return {"questions": [], "document_markdown": "", "error": str(exc)}
+
+    def _generate_options_in_parallel(
+        self,
+        *,
+        config: dict[str, Any],
+        prompt_settings: dict[str, Any],
+        placeholders: dict[str, Any],
+        parsed_questions: list[dict[str, Any]],
+        qa_text: str,
+        option_open: str,
+        option_close: str,
+        project_id: str,
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        candidates: list[tuple[int, str, list[str]]] = []
+        for index, question_item in enumerate(parsed_questions):
+            question = str(question_item.get("question", "")).strip()
+            if not question:
+                continue
+            fallback_options = [str(item).strip() for item in question_item.get("options", []) if str(item).strip()]
+            candidates.append((index, question, fallback_options))
+
+        if not candidates:
+            return []
+
+        workers = min(self._resolve_concurrent_workers(config), len(candidates))
+        results: list[tuple[int, dict[str, Any]]] = []
+
+        if workers == 1:
+            for index, question, fallback_options in candidates:
+                options = self._generate_single_question_options(
+                    config=config,
+                    prompt_settings=prompt_settings,
+                    placeholders=placeholders,
+                    qa_text=qa_text,
+                    question=question,
+                    option_open=option_open,
+                    option_close=option_close,
+                    project_id=project_id,
+                    session_id=session_id,
+                    stage_suffix=f"options_{index + 1}",
+                )
+                if not options:
+                    options = fallback_options
+                results.append((index, {"question": question, "options": options[:6]}))
+
+            return [payload for _, payload in sorted(results, key=lambda item: item[0])]
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_map = {
+                pool.submit(
+                    self._generate_single_question_options,
+                    config=config,
+                    prompt_settings=prompt_settings,
+                    placeholders=placeholders,
+                    qa_text=qa_text,
+                    question=question,
+                    option_open=option_open,
+                    option_close=option_close,
+                    project_id=project_id,
+                    session_id=session_id,
+                    stage_suffix=f"options_{index + 1}",
+                ): (index, question, fallback_options)
+                for index, question, fallback_options in candidates
+            }
+
+            for future in as_completed(future_map):
+                index, question, fallback_options = future_map[future]
+                try:
+                    options = future.result()
+                except Exception as exc:
+                    self.system_logger.warning(
+                        "dialog_options_failed project_id=%s session_id=%s question_index=%s error=%s",
+                        project_id,
+                        session_id,
+                        index,
+                        exc,
+                    )
+                    options = []
+
+                if not options:
+                    options = fallback_options
+
+                results.append((index, {"question": question, "options": options[:6]}))
+
+        return [payload for _, payload in sorted(results, key=lambda item: item[0])]
+
+    def _generate_single_question_options(
+        self,
+        *,
+        config: dict[str, Any],
+        prompt_settings: dict[str, Any],
+        placeholders: dict[str, Any],
+        qa_text: str,
+        question: str,
+        option_open: str,
+        option_close: str,
+        project_id: str,
+        session_id: str,
+        stage_suffix: str,
+    ) -> list[str]:
+        options_prompt = self._render_template(
+            str(prompt_settings.get("options_prompt_template", "")),
+            placeholders=placeholders,
+            # 选项生成阶段仅使用当前会话历史，不注入项目文档与本轮输入上下文。
+            project_document="",
+            user_input="",
+            question_and_input=f"{qa_text}\n\n[当前问题]\n{question}",
+        )
+        options_prompt += (
+            f"\n\n请仅用标记输出该问题选项："
+            f"{option_open}选项文本{option_close}。"
+        )
+        options_raw = self._query_llm(
+            api_config=config.get("api", {}),
+            prompt=options_prompt,
+            stage=stage_suffix,
+            project_id=project_id,
+            session_id=session_id,
+        )
+        return parse_tag_values(options_raw, option_open, option_close)
+
+    def _resolve_concurrent_workers(self, config: dict[str, Any]) -> int:
+        generation = config.get("generation", {})
+        raw_value = generation.get("concurrent_workers", 5)
+        try:
+            workers = int(raw_value)
+        except (TypeError, ValueError):
+            workers = 5
+        return max(1, min(20, workers))
 
     def _generate_final_document(
         self,

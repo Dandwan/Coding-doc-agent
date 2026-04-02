@@ -17,9 +17,12 @@ DocAgent 是一个面向需求澄清与开发文档生成的 Web 工具，采用
 
 - 全局配置管理
   - 管理 projects_root、API 参数、文档路径规则
+  - 管理并行生成配置 generation.concurrent_workers（1~20）
   - 管理 workflow 默认策略（积极上传开关与默认分支）
+  - 管理 workflow.proactive_push_instruction（积极上传注入文案）
   - 配置持久化到 ~/.docagent/config.json
   - 项目索引持久化到 ~/.docagent/projects.json
+  - 首次启动或用户配置缺失时，从软件内 default_settings/config.default.json 初始化配置
 
 - 会话管理
   - 每项目独立会话列表
@@ -29,11 +32,13 @@ DocAgent 是一个面向需求澄清与开发文档生成的 Web 工具，采用
 - 需求澄清交互
   - 新建会话后第一步由用户直接输入原始需求（自由文本）
   - 系统优先识别需求中的歧义点，再动态生成选项供用户确认
+  - 对多个歧义点采用并行方式生成选项，并受 generation.concurrent_workers 限流
   - 问题 + 3~5 选项
   - 动态“其他/补充”输入标签
   - 跳过问题按钮
   - 至少选择或输入后才能提交
   - 已完成后仍可继续新增需求，系统重新核实并更新文档
+  - 生成选项会存入会话历史独立字段 options，仅用于记录，不回注到后续 LLM 上下文
 
 - 文档生成与版本管理
   - 每次提交答案后自动生成版本
@@ -41,8 +46,8 @@ DocAgent 是一个面向需求澄清与开发文档生成的 Web 工具，采用
   - 同步维护 docs 版本目录中的 DEVELOPMENT.md 最新版
   - 同步维护项目根目录 AGENT_DEVELOPMENT.md（便于直接给开发 Agent 读取）
   - 基于当前会话历史上下文，按需向 AGENT_DEVELOPMENT.md 注入“更新项目开发文档”和“执行积极上传”指令
-  - “更新项目开发文档”指令中的路径由配置解析：优先项目路径，其次读取 doc_paths.project_doc，并支持 PROJECT 占位符替换为项目名
-  - “执行积极上传”仅在会话历史明确要求且项目启用积极上传时注入；分支优先项目级，缺省回退 workflow.proactive_push_branch_default
+  - “更新项目开发文档”指令中的路径仅来自全局配置 doc_paths.project_doc，并将 PROJECT 占位符替换为项目名
+  - “执行积极上传”仅在会话历史明确要求且项目启用积极上传时注入，文案直接读取 workflow.proactive_push_instruction
   - 指令注入块具备可覆盖更新能力，避免同一文档重复追加
   - 支持历史版本查看、恢复、与最新版对比 diff
 
@@ -108,10 +113,12 @@ DocAgent 是一个面向需求澄清与开发文档生成的 Web 工具，采用
 - 关键字段：
   - projects_root: 默认项目根目录
   - api.url/api_key/model/temperature/timeout/max_retries
+  - generation.concurrent_workers
   - doc_paths.project_doc
   - doc_paths.agent_doc_dir
   - workflow.proactive_push_enabled_default
   - workflow.proactive_push_branch_default
+  - workflow.proactive_push_instruction
 
 ## 6. 部署与运行
 

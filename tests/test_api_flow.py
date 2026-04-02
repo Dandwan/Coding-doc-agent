@@ -50,6 +50,8 @@ def test_config_read_and_update(client: tuple[TestClient, Path], tmp_path: Path)
     config = config_resp.json()
     assert "projects_root" in config
     assert config["doc_paths"]["project_doc"] == "docs/project/PROJECT.md"
+    assert config["generation"]["concurrent_workers"] == 5
+    assert config["workflow"]["proactive_push_instruction"] == "请你积极上传，每当开发完一个功能，则进行一次上传"
     assert "logging" in config
     assert "root_dir" in config["logging"]
 
@@ -59,10 +61,12 @@ def test_config_read_and_update(client: tuple[TestClient, Path], tmp_path: Path)
         json={
             "projects_root": str(new_root),
             "api": {"model": "gpt-test"},
+            "generation": {"concurrent_workers": 7},
             "doc_paths": {"agent_doc_dir": "docs/agent_versions"},
             "workflow": {
                 "proactive_push_enabled_default": True,
                 "proactive_push_branch_default": "release/test",
+                "proactive_push_instruction": "每完成一个功能就立刻上传远程仓库",
             },
             "logging": {
                 "root_dir": str(tmp_path / "logs"),
@@ -74,9 +78,11 @@ def test_config_read_and_update(client: tuple[TestClient, Path], tmp_path: Path)
     loaded = c.get("/api/config").json()
     assert loaded["projects_root"] == str(new_root)
     assert loaded["api"]["model"] == "gpt-test"
+    assert loaded["generation"]["concurrent_workers"] == 7
     assert loaded["doc_paths"]["agent_doc_dir"] == "docs/agent_versions"
     assert loaded["workflow"]["proactive_push_enabled_default"] is True
     assert loaded["workflow"]["proactive_push_branch_default"] == "release/test"
+    assert loaded["workflow"]["proactive_push_instruction"] == "每完成一个功能就立刻上传远程仓库"
     assert loaded["logging"]["root_dir"] == str(tmp_path / "logs")
     assert "clarify_prompt_template" in loaded["prompt_settings"]
     assert "markers" in loaded["prompt_settings"]
@@ -250,6 +256,8 @@ def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Pa
     updated_session = answer_resp.json()["session"]
 
     assert len(updated_session["history"]) == 1
+    assert "options" in updated_session["history"][0]
+    assert len(updated_session["history"][0]["options"]) == 2
     assert updated_session["current_document"] == ""
     assert updated_session["current_question"]["question"] == "目标用户是谁？"
     assert len(updated_session["current_question"]["options"]) >= 1
@@ -316,6 +324,70 @@ def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Pa
     restored = restore_resp.json()
     assert restored["file_name"] == source
     assert "content" in restored
+
+
+def test_parallel_option_generation_tolerates_single_question_timeout(
+    client: tuple[TestClient, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    c, _ = client
+
+    import backend.main as main  # noqa: WPS433
+
+    def fake_query_llm(*, api_config, prompt, stage, **kwargs):
+        if stage == "clarify":
+            return (
+                "<question>问题一：目标用户是谁？</question>"
+                "<option>内部用户</option>"
+                "<option>外部用户</option>"
+                "<question>问题二：核心输入源是什么？</question>"
+            )
+
+        if stage == "options_1":
+            raise RuntimeError("timeout")
+        if stage == "options_2":
+            return "<option>来自 API</option><option>来自文件</option><option>来自手工录入</option>"
+
+        if stage == "final_doc":
+            return (
+                "# 项目功能清单\n\n"
+                "- 并行选项生成容错\n\n"
+                "# 项目细节\n\n"
+                "- 单题失败不阻塞\n\n"
+                "# 代码架构与实现方式\n\n"
+                "- FastAPI\n"
+            )
+        return ""
+
+    monkeypatch.setattr(main.conversation_service, "_query_llm", fake_query_llm)
+
+    folder = tmp_path / "parallel_tolerance_project"
+    created = _create_project(c, folder, name="ParallelTolerance")
+    project_id = created["id"]
+
+    c.post("/api/config", json={"generation": {"concurrent_workers": 4}})
+
+    session_resp = c.post(f"/api/projects/{project_id}/sessions", json={"name": "并行容错"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+
+    answer_resp = c.post(
+        f"/api/projects/{project_id}/sessions/{session_id}/answer",
+        json={"selected_options": [], "text_input": "请先识别歧义并生成选项", "skip_question": False},
+    )
+    assert answer_resp.status_code == 200, answer_resp.text
+
+    updated_session = answer_resp.json()["session"]
+    assert updated_session["current_question"]["question"] == "问题一：目标用户是谁？"
+    assert updated_session["current_question"]["options"] == ["内部用户", "外部用户"]
+
+    stored_options = updated_session["history"][0].get("options", [])
+    assert len(stored_options) == 2
+    assert stored_options[0]["question"] == "问题一：目标用户是谁？"
+    assert stored_options[0]["options"] == ["内部用户", "外部用户"]
+    assert stored_options[1]["question"] == "问题二：核心输入源是什么？"
+    assert stored_options[1]["options"] == ["来自 API", "来自文件", "来自手工录入"]
 
 
 def test_reverify_when_new_requirements_after_complete(client: tuple[TestClient, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

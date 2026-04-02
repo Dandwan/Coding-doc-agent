@@ -39,6 +39,18 @@ def test_resolve_project_doc_path_replaces_placeholder() -> None:
     assert path == "docs/project/Doc-Agent.md"
 
 
+def test_resolve_project_doc_path_reads_global_config_only() -> None:
+    config = {"doc_paths": {"project_doc": "docs/global/PROJECT.md"}}
+
+    path = resolve_project_doc_path(
+        project_name="DemoProject",
+        config=config,
+        project_doc_path="docs/project_override/PROJECT.md",
+    )
+
+    assert path == "docs/global/DemoProject.md"
+
+
 def test_add_update_project_doc_instruction_with_resolved_path() -> None:
     config = {"doc_paths": {"project_doc": "docs/project/PROJECT.md"}}
     history = _build_history("请在AGENT_DEVELOPMENT.md中要求agent更新项目开发文档")
@@ -75,7 +87,9 @@ def test_skip_proactive_instruction_when_disabled() -> None:
 def test_add_proactive_instruction_without_branch_when_enabled() -> None:
     config = {
         "doc_paths": {"project_doc": "docs/project/PROJECT.md"},
-        "workflow": {"proactive_push_branch_default": ""},
+        "workflow": {
+            "proactive_push_instruction": "请你积极上传，每当开发完一个功能，则进行一次上传",
+        },
     }
     history = _build_history("需要在文档里强调积极上传，完成一个功能后自动推送")
 
@@ -88,12 +102,16 @@ def test_add_proactive_instruction_without_branch_when_enabled() -> None:
         proactive_push_branch="",
     )
 
-    assert "要求Agent执行积极上传，在完成一个功能后自动推送变更。" in content
-    assert "推送到 " not in content
+    assert "请你积极上传，每当开发完一个功能，则进行一次上传" in content
 
 
-def test_add_proactive_instruction_with_branch_when_enabled() -> None:
-    config = {"doc_paths": {"project_doc": "docs/project/PROJECT.md"}}
+def test_add_proactive_instruction_uses_global_text_even_with_branch() -> None:
+    config = {
+        "doc_paths": {"project_doc": "docs/project/PROJECT.md"},
+        "workflow": {
+            "proactive_push_instruction": "每开发完一个功能都要立即提交并上传",
+        },
+    }
     history = _build_history("需要在文档里强调积极上传，完成一个功能后自动推送")
 
     content = apply_contextual_instructions(
@@ -105,7 +123,24 @@ def test_add_proactive_instruction_with_branch_when_enabled() -> None:
         proactive_push_branch="main",
     )
 
-    assert "要求Agent执行积极上传，在完成一个功能后自动将变更推送到 main 分支。" in content
+    assert "每开发完一个功能都要立即提交并上传" in content
+    assert "main 分支" not in content
+
+
+def test_add_proactive_instruction_uses_default_text_when_config_missing() -> None:
+    config = {"doc_paths": {"project_doc": "docs/project/PROJECT.md"}}
+    history = _build_history("请在文档里补充积极上传要求")
+
+    content = apply_contextual_instructions(
+        BASE_DOCUMENT,
+        project_name="DemoProject",
+        history=history,
+        config=config,
+        proactive_push_enabled=True,
+        proactive_push_branch="",
+    )
+
+    assert "请你积极上传，每当开发完一个功能，则进行一次上传" in content
 
 
 def test_no_intent_keeps_document_unchanged() -> None:

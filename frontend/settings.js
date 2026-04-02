@@ -1,3 +1,5 @@
+const DEFAULT_PROACTIVE_PUSH_INSTRUCTION = "请你积极上传，每当开发完一个功能，则进行一次上传";
+
 document.addEventListener("DOMContentLoaded", () => {
   setupGlobalErrorHandlers();
 
@@ -67,12 +69,15 @@ async function loadConfig() {
   document.getElementById("api-temperature").value = config.api?.temperature ?? 0.7;
   document.getElementById("api-timeout").value = config.api?.timeout ?? 60;
   document.getElementById("api-retries").value = config.api?.max_retries ?? 2;
+  document.getElementById("generation-concurrent-workers").value = config.generation?.concurrent_workers ?? 5;
   document.getElementById("project-doc-path").value = config.doc_paths?.project_doc || "docs/project/PROJECT.md";
   document.getElementById("agent-doc-dir").value = config.doc_paths?.agent_doc_dir || "docs/agent";
   document.getElementById("global-proactive-push-enabled").checked =
     config.workflow?.proactive_push_enabled_default || false;
   document.getElementById("global-proactive-push-branch").value =
     config.workflow?.proactive_push_branch_default || "";
+  document.getElementById("global-proactive-push-instruction").value =
+    config.workflow?.proactive_push_instruction || DEFAULT_PROACTIVE_PUSH_INSTRUCTION;
 
   document.getElementById("clarify-prompt-template").value =
     config.prompt_settings?.clarify_prompt_template || "";
@@ -109,6 +114,9 @@ async function onSaveConfig() {
       timeout: Number(document.getElementById("api-timeout").value),
       max_retries: Number(document.getElementById("api-retries").value),
     },
+    generation: {
+      concurrent_workers: Number(document.getElementById("generation-concurrent-workers").value),
+    },
     doc_paths: {
       project_doc: document.getElementById("project-doc-path").value.trim(),
       agent_doc_dir: document.getElementById("agent-doc-dir").value.trim(),
@@ -116,6 +124,7 @@ async function onSaveConfig() {
     workflow: {
       proactive_push_enabled_default: document.getElementById("global-proactive-push-enabled").checked,
       proactive_push_branch_default: document.getElementById("global-proactive-push-branch").value.trim(),
+      proactive_push_instruction: document.getElementById("global-proactive-push-instruction").value.trim(),
     },
     logging: {
       root_dir: document.getElementById("log-root-dir").value.trim(),
@@ -144,6 +153,16 @@ async function onSaveConfig() {
   }
   if (!payload.logging.root_dir) {
     showMessage("日志保存根目录不能为空", true);
+    return;
+  }
+
+  if (!Number.isInteger(payload.generation.concurrent_workers) || payload.generation.concurrent_workers < 1 || payload.generation.concurrent_workers > 20) {
+    showMessage("并行生成并发数必须是 1 到 20 的整数", true);
+    return;
+  }
+
+  if (!payload.workflow.proactive_push_instruction) {
+    showMessage("请填写“积极上传指令文案”", true);
     return;
   }
 

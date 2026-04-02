@@ -65,6 +65,12 @@
           <input id="api-retries" type="number" min="1" max="8" />
         </label>
 
+        <h3>并行生成设置</h3>
+        <label>
+          并行生成并发数（generation.concurrent_workers）
+          <input id="generation-concurrent-workers" type="number" min="1" max="20" />
+        </label>
+
         <h3>文档路径规则</h3>
         <label>
           项目开发文档路径（project_doc）
@@ -89,6 +95,13 @@
         <label>
           默认上传分支（可留空）
           <input id="global-proactive-push-branch" type="text" placeholder="例如：main / release/v1" />
+        </label>
+        <label>
+          积极上传指令文案（proactive_push_instruction）
+          <textarea
+            id="global-proactive-push-instruction"
+            placeholder="请你积极上传，每当开发完一个功能，则进行一次上传"
+          ></textarea>
         </label>
 
         <h3>提示词设置</h3>
