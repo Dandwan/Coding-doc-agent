@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 
@@ -9,6 +10,8 @@ DEFAULT_PROJECT_DOC_PATTERN = "docs/project/PROJECT.md"
 DEFAULT_PROACTIVE_PUSH_INSTRUCTION = "请你积极上传，每当开发完一个功能，则进行一次上传"
 AUTO_BLOCK_START = "<!-- DOCAGENT_AUTO_INSTRUCTIONS_START -->"
 AUTO_BLOCK_END = "<!-- DOCAGENT_AUTO_INSTRUCTIONS_END -->"
+FIXED_RULES_BLOCK_START = "<!-- DOCAGENT_FIXED_RULES_START -->"
+FIXED_RULES_BLOCK_END = "<!-- DOCAGENT_FIXED_RULES_END -->"
 
 
 def generate_initial_document(
@@ -257,6 +260,52 @@ def ensure_required_sections(content: str, previous_document: str = "") -> str:
     return generate_initial_document("未命名项目")
 
 
+def ensure_docagent_governance_block(
+    content: str,
+    *,
+    project_doc_path: str,
+    project_doc_exists: bool,
+    proactive_push_enabled: bool,
+    proactive_push_branch: str,
+    root_agent_doc_path: str = "AGENT_DEVELOPMENT.md",
+) -> str:
+    normalized_project_doc_path = str(project_doc_path or "").strip() or DEFAULT_PROJECT_DOC_PATTERN
+    normalized_agent_doc_path = Path(str(root_agent_doc_path or "AGENT_DEVELOPMENT.md")).name or "AGENT_DEVELOPMENT.md"
+    project_doc_state_line = (
+        "- 当前项目开发文档已存在，后续开发时需要持续维护该文件。"
+        if project_doc_exists
+        else "- 当前项目开发文档尚不存在，后续开发时需要先在该路径创建该文件，再持续维护。"
+    )
+
+    block = "\n".join(
+        [
+            FIXED_RULES_BLOCK_START,
+            "## DocAgent固定规范",
+            "### 项目开发文档管理",
+            f"- 项目开发文档路径：`{normalized_project_doc_path}`。",
+            project_doc_state_line,
+            "- 项目开发文档由开发项目的 Agent 负责维护，DocAgent 仅读取该文档作为需求上下文。",
+            "- 开发项目的 Agent 每完成一个新功能后，都必须同步更新项目开发文档，记录实现状态、配置变更、测试结果与待办事项。",
+            "### Agent开发文档输出",
+            f"- 最新 Agent 开发文档固定输出到项目根目录：`{normalized_agent_doc_path}`。",
+            "- 每次需求更新后都要覆盖该文件，并同步保留历史版本快照。",
+            "### 积极上传要求",
+            *_build_proactive_push_policy_lines(
+                proactive_push_enabled=proactive_push_enabled,
+                proactive_push_branch=proactive_push_branch,
+            ),
+            FIXED_RULES_BLOCK_END,
+        ]
+    )
+
+    cleaned_content, _ = _remove_managed_block(
+        content,
+        start_token=FIXED_RULES_BLOCK_START,
+        end_token=FIXED_RULES_BLOCK_END,
+    )
+    return _insert_block_before_heading(cleaned_content, "# 代码架构与实现方式", block)
+
+
 def _collect_answer_lines(history: list[dict[str, Any]]) -> list[str]:
     lines: list[str] = []
     for turn in history:
@@ -277,20 +326,29 @@ def _derive_function_items(answer_lines: list[str]) -> str:
 
 
 def _build_proactive_push_lines(proactive_push_enabled: bool, proactive_push_branch: str) -> str:
+    return "\n".join(
+        _build_proactive_push_policy_lines(
+            proactive_push_enabled=proactive_push_enabled,
+            proactive_push_branch=proactive_push_branch,
+        )
+    )
+
+
+def _build_proactive_push_policy_lines(proactive_push_enabled: bool, proactive_push_branch: str) -> list[str]:
     if not proactive_push_enabled:
-        return "- 当前未启用“积极上传”要求。"
+        return ["- 当前未启用“积极上传”要求。"]
 
     branch = proactive_push_branch.strip()
     if branch:
-        return (
-            f"- 已启用“积极上传”：开发项目的 Agent 每完成一个新功能，必须立即提交并上传到 `{branch}` 分支。\n"
-            "- 提交信息需明确对应功能点和影响范围。"
-        )
+        return [
+            f"- 已启用“积极上传”：开发项目的 Agent 每完成一个新功能后，都必须立即提交并上传到 `{branch}` 分支。",
+            "- 每次上传都应与刚完成的功能保持一一对应，不要攒多个功能后再统一上传。",
+        ]
 
-    return (
-        "- 已启用“积极上传”：开发项目的 Agent 每完成一个新功能，必须立即提交并上传远程仓库。\n"
-        "- 未指定分支时，不强制强调分支名称。"
-    )
+    return [
+        "- 已启用“积极上传”：开发项目的 Agent 每完成一个新功能后，都必须立即提交并上传远程仓库。",
+        "- 当前未指定分支，因此文档中无需额外强调分支名称。",
+    ]
 
 
 def _collect_user_intent_text(history: list[dict[str, Any]]) -> str:
@@ -351,7 +409,11 @@ def _normalize_project_name_for_path(project_name: str) -> str:
 
 
 def _merge_auto_instruction_block(content: str, instructions: list[str]) -> str:
-    cleaned_content, had_block = _remove_auto_instruction_block(content)
+    cleaned_content, had_block = _remove_managed_block(
+        content,
+        start_token=AUTO_BLOCK_START,
+        end_token=AUTO_BLOCK_END,
+    )
 
     if not instructions:
         return cleaned_content if had_block else content
@@ -365,15 +427,39 @@ def _merge_auto_instruction_block(content: str, instructions: list[str]) -> str:
         ]
     )
 
-    base = cleaned_content.rstrip()
+    return _append_block(cleaned_content, block)
+
+
+def _append_block(content: str, block: str) -> str:
+    base = content.rstrip()
     if not base:
         return block + "\n"
     return base + "\n\n" + block + "\n"
 
 
-def _remove_auto_instruction_block(content: str) -> tuple[str, bool]:
+def _insert_block_before_heading(content: str, heading: str, block: str) -> str:
+    normalized = content.rstrip()
+    if not normalized:
+        return block + "\n"
+
+    if normalized.startswith(heading):
+        prefix = ""
+        suffix = normalized
+    else:
+        marker = f"\n{heading}"
+        index = normalized.find(marker)
+        if index < 0:
+            return _append_block(normalized, block)
+        prefix = normalized[:index].rstrip()
+        suffix = normalized[index + 1 :].lstrip("\n")
+
+    pieces = [piece for piece in [prefix, block, suffix] if piece]
+    return "\n\n".join(pieces).rstrip() + "\n"
+
+
+def _remove_managed_block(content: str, *, start_token: str, end_token: str) -> tuple[str, bool]:
     pattern = re.compile(
-        re.escape(AUTO_BLOCK_START) + r".*?" + re.escape(AUTO_BLOCK_END),
+        re.escape(start_token) + r".*?" + re.escape(end_token),
         re.DOTALL,
     )
     cleaned, count = pattern.subn("", content)

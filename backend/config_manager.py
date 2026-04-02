@@ -64,8 +64,11 @@ class ConfigManager:
                     "历史问答:\n</questionAndInput>"
                 ),
                 "final_doc_prompt_template": (
-                    "你是技术负责人。请基于上下文生成最终 Markdown 格式 Agent 开发文档，"
-                    "必须包含：将要开发的新功能、开发步骤、细节要求。\n\n"
+                    "你是技术负责人。请基于上下文生成最终 Markdown 格式 Agent 开发文档。"
+                    "文档必须包含：将要开发的新功能、开发步骤、细节要求；"
+                    "并在“项目细节”中明确写出项目开发文档的维护要求、维护责任和文档位置；"
+                    "同时明确最新 Agent 开发文档输出到项目根目录 `AGENT_DEVELOPMENT.md`；"
+                    "若已启用积极上传，还要写清每完成一个功能就提交上传一次，以及上传到哪个分支（如果已提供分支）。\n\n"
                     "项目开发文档:\n</projectDocument>\n\n"
                     "用户本轮输入:\n</userInput>\n\n"
                     "历史问答:\n</questionAndInput>"

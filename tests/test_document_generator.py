@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from backend.document.generator import apply_contextual_instructions, resolve_project_doc_path
+from backend.document.generator import (
+    apply_contextual_instructions,
+    ensure_docagent_governance_block,
+    resolve_project_doc_path,
+)
 
 
 BASE_DOCUMENT = """# 项目功能清单
@@ -141,6 +145,47 @@ def test_add_proactive_instruction_uses_default_text_when_config_missing() -> No
     )
 
     assert "请你积极上传，每当开发完一个功能，则进行一次上传" in content
+
+
+def test_ensure_docagent_governance_block_adds_required_paths_and_branch() -> None:
+    content = ensure_docagent_governance_block(
+        BASE_DOCUMENT,
+        project_doc_path="docs/project/PROJECT.md",
+        project_doc_exists=True,
+        proactive_push_enabled=True,
+        proactive_push_branch="release/v2",
+        root_agent_doc_path="/tmp/demo/AGENT_DEVELOPMENT.md",
+    )
+
+    assert "## DocAgent固定规范" in content
+    assert "项目开发文档路径：`docs/project/PROJECT.md`" in content
+    assert "项目开发文档由开发项目的 Agent 负责维护" in content
+    assert "每完成一个新功能后，都必须同步更新项目开发文档" in content
+    assert "AGENT_DEVELOPMENT.md" in content
+    assert "每完成一个新功能后，都必须立即提交并上传到 `release/v2` 分支" in content
+
+
+def test_ensure_docagent_governance_block_handles_missing_project_doc_and_is_idempotent() -> None:
+    once = ensure_docagent_governance_block(
+        BASE_DOCUMENT,
+        project_doc_path="docs/project/PROJECT.md",
+        project_doc_exists=False,
+        proactive_push_enabled=False,
+        proactive_push_branch="",
+        root_agent_doc_path="AGENT_DEVELOPMENT.md",
+    )
+    twice = ensure_docagent_governance_block(
+        once,
+        project_doc_path="docs/project/PROJECT.md",
+        project_doc_exists=False,
+        proactive_push_enabled=False,
+        proactive_push_branch="",
+        root_agent_doc_path="AGENT_DEVELOPMENT.md",
+    )
+
+    assert "尚不存在" in once
+    assert "当前未启用“积极上传”要求" in once
+    assert twice.count("## DocAgent固定规范") == 1
 
 
 def test_no_intent_keeps_document_unchanged() -> None:

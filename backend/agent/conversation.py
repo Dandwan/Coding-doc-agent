@@ -11,6 +11,7 @@ from backend.config_manager import ConfigManager
 from backend.document.generator import (
     apply_contextual_instructions,
     ensure_required_sections,
+    ensure_docagent_governance_block,
     generate_document_from_context,
 )
 from backend.document.loader import load_project_document
@@ -78,6 +79,7 @@ class ConversationService:
         proactive_push_enabled = bool(project.get("proactive_push_enabled", False))
         proactive_push_branch = str(project.get("proactive_push_branch", "")).strip()
         root_agent_doc_path = str(project.get("root_agent_doc_path", "AGENT_DEVELOPMENT.md"))
+        project_doc_exists = bool(project_doc_content.strip())
 
         if pending_questions:
             session["pending_questions"] = pending_questions
@@ -102,6 +104,12 @@ class ConversationService:
             user_input=user_input,
             history=history,
             session_context_text=session_context_text,
+            project_name=str(project.get("name", "未命名项目")),
+            project_doc_path=project_doc_path,
+            project_doc_exists=project_doc_exists,
+            proactive_push_enabled=proactive_push_enabled,
+            proactive_push_branch=proactive_push_branch,
+            root_agent_doc_path=root_agent_doc_path,
             project_id=project_id,
             session_id=session_id,
         )
@@ -156,7 +164,7 @@ class ConversationService:
                 current_document = generate_document_from_context(
                     project_name=project.get("name", "未命名项目"),
                     project_doc_path=project_doc_path,
-                    project_doc_exists=bool(project_doc_content.strip()),
+                    project_doc_exists=project_doc_exists,
                     history=history,
                     unresolved_points=[],
                     previous_document=previous_document,
@@ -165,6 +173,14 @@ class ConversationService:
                     root_agent_doc_path=Path(root_agent_doc_path).name,
                 )
             current_document = ensure_required_sections(current_document, previous_document=previous_document)
+            current_document = ensure_docagent_governance_block(
+                current_document,
+                project_doc_path=project_doc_path,
+                project_doc_exists=project_doc_exists,
+                proactive_push_enabled=proactive_push_enabled,
+                proactive_push_branch=proactive_push_branch,
+                root_agent_doc_path=root_agent_doc_path,
+            )
             current_document = apply_contextual_instructions(
                 current_document,
                 project_name=project.get("name", "未命名项目"),
@@ -210,6 +226,8 @@ class ConversationService:
         project_doc_content = load_project_document(project["folder"], project_doc_path) or ""
         proactive_push_enabled = bool(project.get("proactive_push_enabled", False))
         proactive_push_branch = str(project.get("proactive_push_branch", "")).strip()
+        root_agent_doc_path = str(project.get("root_agent_doc_path", "AGENT_DEVELOPMENT.md"))
+        project_doc_exists = bool(project_doc_content.strip())
 
         session_context_text = self._build_session_context_text(
             session_name=str(session.get("name", "当前会话")),
@@ -223,6 +241,12 @@ class ConversationService:
                 project_doc_content=project_doc_content,
                 user_input="用户点击“保存对话并生成Agent开发文档”按钮，要求基于当前会话完整上下文输出最新文档。",
                 question_and_input=session_context_text,
+                project_name=str(project.get("name", "未命名项目")),
+                project_doc_path=project_doc_path,
+                project_doc_exists=project_doc_exists,
+                proactive_push_enabled=proactive_push_enabled,
+                proactive_push_branch=proactive_push_branch,
+                root_agent_doc_path=root_agent_doc_path,
                 project_id=project_id,
                 session_id=session_id,
                 stage="finish_final_doc",
@@ -244,6 +268,14 @@ class ConversationService:
             return session
 
         final_document = ensure_required_sections(final_document, previous_document=previous_document)
+        final_document = ensure_docagent_governance_block(
+            final_document,
+            project_doc_path=project_doc_path,
+            project_doc_exists=project_doc_exists,
+            proactive_push_enabled=proactive_push_enabled,
+            proactive_push_branch=proactive_push_branch,
+            root_agent_doc_path=root_agent_doc_path,
+        )
         final_document = apply_contextual_instructions(
             final_document,
             project_name=project.get("name", "未命名项目"),
@@ -282,6 +314,12 @@ class ConversationService:
         user_input: str,
         history: list[dict[str, Any]],
         session_context_text: str,
+        project_name: str,
+        project_doc_path: str,
+        project_doc_exists: bool,
+        proactive_push_enabled: bool,
+        proactive_push_branch: str,
+        root_agent_doc_path: str,
         project_id: str,
         session_id: str,
     ) -> dict[str, Any]:
@@ -340,6 +378,12 @@ class ConversationService:
                 project_doc_content=project_doc_content,
                 user_input=user_input,
                 question_and_input=qa_text,
+                project_name=project_name,
+                project_doc_path=project_doc_path,
+                project_doc_exists=project_doc_exists,
+                proactive_push_enabled=proactive_push_enabled,
+                proactive_push_branch=proactive_push_branch,
+                root_agent_doc_path=root_agent_doc_path,
                 project_id=project_id,
                 session_id=session_id,
                 stage="final_doc",
@@ -491,6 +535,12 @@ class ConversationService:
         project_doc_content: str,
         user_input: str,
         question_and_input: str,
+        project_name: str,
+        project_doc_path: str,
+        project_doc_exists: bool,
+        proactive_push_enabled: bool,
+        proactive_push_branch: str,
+        root_agent_doc_path: str,
         project_id: str,
         session_id: str,
         stage: str,
@@ -509,6 +559,14 @@ class ConversationService:
             "\n# 项目功能清单\n# 项目细节\n# 代码架构与实现方式"
             "\n同时在文档中必须明确：将要开发的新功能、开发步骤、细节要求。"
         )
+        final_prompt += self._build_final_doc_constraints(
+            project_name=project_name,
+            project_doc_path=project_doc_path,
+            project_doc_exists=project_doc_exists,
+            proactive_push_enabled=proactive_push_enabled,
+            proactive_push_branch=proactive_push_branch,
+            root_agent_doc_path=root_agent_doc_path,
+        )
         final_raw = self._query_llm(
             api_config=config.get("api", {}),
             prompt=final_prompt,
@@ -517,6 +575,51 @@ class ConversationService:
             session_id=session_id,
         )
         return self._strip_code_fence(final_raw)
+
+    def _build_final_doc_constraints(
+        self,
+        *,
+        project_name: str,
+        project_doc_path: str,
+        project_doc_exists: bool,
+        proactive_push_enabled: bool,
+        proactive_push_branch: str,
+        root_agent_doc_path: str,
+    ) -> str:
+        normalized_project_name = project_name.strip() or "未命名项目"
+        normalized_project_doc_path = project_doc_path.strip() or "docs/project/PROJECT.md"
+        normalized_agent_doc_path = Path(root_agent_doc_path or "AGENT_DEVELOPMENT.md").name or "AGENT_DEVELOPMENT.md"
+
+        lines = [
+            "",
+            "",
+            f"当前项目名：{normalized_project_name}。",
+            "文档中还必须写入以下固定规范：",
+            f"1. 在“项目细节”中明确写出项目开发文档路径：`{normalized_project_doc_path}`。",
+            "2. 明确项目开发文档由开发项目的 Agent 负责维护，DocAgent 仅读取不写入。",
+            "3. 明确开发项目的 Agent 每完成一个新功能后，都必须同步更新项目开发文档，记录实现状态、配置变更、测试结果与待办事项。",
+            f"4. 明确最新 Agent 开发文档固定输出到项目根目录：`{normalized_agent_doc_path}`。",
+        ]
+
+        if project_doc_exists:
+            lines.append("5. 当前项目开发文档已存在，文档中应说明后续开发需持续维护该文件。")
+        else:
+            lines.append("5. 当前项目开发文档尚不存在，文档中应说明后续开发需先创建该文件，再持续维护。")
+
+        if proactive_push_enabled:
+            branch = proactive_push_branch.strip()
+            if branch:
+                lines.append(
+                    f"6. 已启用积极上传：文档中必须明确“每完成一个新功能就提交并上传一次”，并明确上传目标分支为 `{branch}`。"
+                )
+            else:
+                lines.append(
+                    "6. 已启用积极上传：文档中必须明确“每完成一个新功能就提交并上传一次”，但当前无需强调具体分支。"
+                )
+        else:
+            lines.append("6. 当前未启用积极上传要求。")
+
+        return "\n".join(lines)
 
     def _query_llm(
         self,
