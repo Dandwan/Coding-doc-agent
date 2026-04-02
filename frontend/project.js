@@ -4,12 +4,26 @@ const state = {
   sessions: [],
   currentSession: null,
   versions: [],
+  ui: {
+    busy: false,
+    timer: null,
+    progress: 0,
+    autoProgressCap: 88,
+  },
+};
+
+const PRIMARY_ACTION_BUSY_LABELS = {
+  "submit-answer": "AI思考中...",
+  "skip-question": "跳过处理中...",
+  "finish-session": "处理中...",
 };
 
 document.addEventListener("DOMContentLoaded", () => {
+  setupGlobalErrorHandlers();
   state.projectId = new URLSearchParams(window.location.search).get("project_id") || "";
 
   bindStaticActions();
+  initializeStatusUi();
 
   if (!state.projectId) {
     showMessage("缺少 project_id，无法进入项目工作区", true);
@@ -17,7 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   bootstrap().catch((error) => {
-    showMessage(`初始化失败：${error.message}`, true);
+    reportError("初始化", error);
   });
 });
 
@@ -29,22 +43,34 @@ function bindStaticActions() {
     window.location.href = "/settings";
   });
 
-  document.getElementById("open-folder-btn").addEventListener("click", openFolder);
+  document.getElementById("open-folder-btn").addEventListener("click", withErrorHandling("打开项目文件夹", openFolder));
   document
     .getElementById("proactive-push-use-global")
     .addEventListener("change", applyProactiveControlsState);
-  document.getElementById("create-session").addEventListener("click", createSession);
-  document.getElementById("rename-session").addEventListener("click", renameSession);
-  document.getElementById("delete-session").addEventListener("click", deleteSession);
-  document.getElementById("submit-answer").addEventListener("click", () => submitAnswer(false));
-  document.getElementById("skip-question").addEventListener("click", () => submitAnswer(true));
-  document.getElementById("finish-session").addEventListener("click", finishSession);
-  document.getElementById("save-project-settings").addEventListener("click", saveProjectSettings);
-  document.getElementById("pick-project-folder-path").addEventListener("click", onPickProjectFolderPath);
-  document.getElementById("pick-project-doc-folder").addEventListener("click", onPickProjectDocFolder);
-  document.getElementById("view-version").addEventListener("click", viewVersion);
-  document.getElementById("compare-version").addEventListener("click", compareVersion);
-  document.getElementById("restore-version").addEventListener("click", restoreVersion);
+  document.getElementById("create-session").addEventListener("click", withErrorHandling("新建会话", createSession));
+  document.getElementById("rename-session").addEventListener("click", withErrorHandling("重命名会话", renameSession));
+  document.getElementById("delete-session").addEventListener("click", withErrorHandling("删除会话", deleteSession));
+  document
+    .getElementById("submit-answer")
+    .addEventListener("click", withErrorHandling("提交回答", async () => submitAnswer(false)));
+  document
+    .getElementById("skip-question")
+    .addEventListener("click", withErrorHandling("跳过问题", async () => submitAnswer(true)));
+  document
+    .getElementById("finish-session")
+    .addEventListener("click", withErrorHandling("保存对话并生成开发文档", finishSession));
+  document
+    .getElementById("save-project-settings")
+    .addEventListener("click", withErrorHandling("保存项目设置", saveProjectSettings));
+  document
+    .getElementById("pick-project-folder-path")
+    .addEventListener("click", withErrorHandling("选择项目目录", onPickProjectFolderPath));
+  document
+    .getElementById("pick-project-doc-folder")
+    .addEventListener("click", withErrorHandling("选择项目开发文档目录", onPickProjectDocFolder));
+  document.getElementById("view-version").addEventListener("click", withErrorHandling("查看版本", viewVersion));
+  document.getElementById("compare-version").addEventListener("click", withErrorHandling("对比版本", compareVersion));
+  document.getElementById("restore-version").addEventListener("click", withErrorHandling("恢复版本", restoreVersion));
 }
 
 async function bootstrap() {
@@ -116,7 +142,7 @@ function renderSessions() {
       <p>更新时间：${escapeHtml(session.updated_at || "-")}</p>
       <p>状态：${session.is_complete ? "已完成" : "进行中"}</p>
     `;
-    card.addEventListener("click", () => loadSession(session.id));
+    card.addEventListener("click", withErrorHandling("加载会话", async () => loadSession(session.id)));
     container.appendChild(card);
   }
 }
@@ -240,7 +266,7 @@ function renderSessionView() {
   }
 
   const history = state.currentSession.history || [];
-  const recent = history.slice(-6).reverse();
+  const recent = history.slice().reverse();
   for (const turn of recent) {
     const li = document.createElement("li");
     li.textContent = `${turn.question || ""} | ${turn.answer || ""}`;
@@ -315,21 +341,45 @@ async function submitAnswer(skipQuestion) {
     skip_question: skipQuestion,
   };
 
-  const response = await api(
-    `/api/projects/${encodeURIComponent(state.projectId)}/sessions/${encodeURIComponent(state.currentSession.id)}/answer`,
+  const startText = skipQuestion
+    ? "AI思考中...正在跳过该问题并重新评估需求"
+    : "AI思考中...正在分析回答并识别澄清点";
+  const successText = skipQuestion ? "已跳过该问题并更新会话。" : "回答已提交并生成新版本。";
+
+  const executed = await runWithGlobalStatus(
     {
-      method: "POST",
-      body: JSON.stringify(payload),
+      startText,
+      successText,
+      errorTextPrefix: "AI处理失败：",
+      autoCap: 90,
+    },
+    async (updateProgress) => {
+      updateProgress(14, "正在提交输入给AI...");
+      const response = await api(
+        `/api/projects/${encodeURIComponent(state.projectId)}/sessions/${encodeURIComponent(state.currentSession.id)}/answer`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }
+      );
+
+      updateProgress(68, "AI返回完成，正在同步会话与项目信息...");
+      state.currentSession = response.session;
+      await loadProject();
+
+      updateProgress(84, "正在刷新文档版本...");
+      await loadVersions();
+      renderSessions();
+      renderSessionView();
+      selectCurrentVersion();
+      updateProgress(96, "即将完成...");
     }
   );
 
-  state.currentSession = response.session;
-  await loadProject();
-  await loadVersions();
-  renderSessions();
-  renderSessionView();
-  selectCurrentVersion();
-  showMessage("回答已提交并生成新版本", false);
+  if (!executed) {
+    return;
+  }
+  showMessage(successText, false);
 }
 
 async function finishSession() {
@@ -338,19 +388,38 @@ async function finishSession() {
     return;
   }
 
-  const result = await api(
-    `/api/projects/${encodeURIComponent(state.projectId)}/sessions/${encodeURIComponent(state.currentSession.id)}/finish`,
+  const executed = await runWithGlobalStatus(
     {
-      method: "POST",
+      startText: "正在保存对话并生成Agent 开发文档...",
+      successText: "保存完成，Agent 开发文档已更新。",
+      errorTextPrefix: "保存失败：",
+      autoCap: 92,
+    },
+    async (updateProgress) => {
+      updateProgress(18, "正在提交保存请求...");
+      const result = await api(
+        `/api/projects/${encodeURIComponent(state.projectId)}/sessions/${encodeURIComponent(state.currentSession.id)}/finish`,
+        {
+          method: "POST",
+        }
+      );
+
+      updateProgress(70, "正在刷新项目信息...");
+      state.currentSession = result;
+      await loadProject();
+
+      updateProgress(86, "正在刷新版本列表...");
+      await loadVersions();
+      renderSessions();
+      renderSessionView();
+      updateProgress(96, "即将完成...");
     }
   );
 
-  state.currentSession = result;
-  await loadProject();
-  await loadVersions();
-  renderSessions();
-  renderSessionView();
-  showMessage("会话已标记完成并保存。", false);
+  if (!executed) {
+    return;
+  }
+  showMessage("会话已保存，并已生成Agent 开发文档。", false);
 }
 
 async function loadVersions() {
@@ -506,30 +575,22 @@ async function openFolder() {
 }
 
 async function onPickProjectFolderPath() {
-  try {
-    const input = document.getElementById("project-folder-path");
-    const selected = await pickFolder(input.value.trim());
-    if (selected) {
-      input.value = selected;
-    }
-  } catch (error) {
-    showMessage(`选择文件夹失败：${error.message}`, true);
+  const input = document.getElementById("project-folder-path");
+  const selected = await pickFolder(input.value.trim());
+  if (selected) {
+    input.value = selected;
   }
 }
 
 async function onPickProjectDocFolder() {
-  try {
-    const input = document.getElementById("project-doc-path");
-    const current = input.value.trim();
-    const initialDir = current.toLowerCase().endsWith(".md")
-      ? current.replace(/[\\/][^\\/]*$/, "")
-      : current;
-    const selected = await pickFolder(initialDir);
-    if (selected) {
-      input.value = toProjectDocPath(selected);
-    }
-  } catch (error) {
-    showMessage(`选择文件夹失败：${error.message}`, true);
+  const input = document.getElementById("project-doc-path");
+  const current = input.value.trim();
+  const initialDir = current.toLowerCase().endsWith(".md")
+    ? current.replace(/[\\/][^\\/]*$/, "")
+    : current;
+  const selected = await pickFolder(initialDir);
+  if (selected) {
+    input.value = toProjectDocPath(selected);
   }
 }
 
@@ -567,28 +628,188 @@ function renderDiffPreview(diffText) {
   preview.textContent = diffText;
 }
 
+function initializeStatusUi() {
+  Object.keys(PRIMARY_ACTION_BUSY_LABELS).forEach((id) => {
+    const button = document.getElementById(id);
+    if (button && !button.dataset.defaultText) {
+      button.dataset.defaultText = button.textContent || "";
+    }
+  });
+  hideGlobalStatusIfIdle(true);
+}
+
+async function runWithGlobalStatus(config, action) {
+  if (state.ui.busy) {
+    showMessage("AI 正在处理中，请稍候。", false);
+    return false;
+  }
+
+  const startText = config?.startText || "AI思考中...";
+  const successText = config?.successText || "处理完成";
+  const errorTextPrefix = config?.errorTextPrefix || "处理失败：";
+  const autoCap = Number.isFinite(config?.autoCap) ? Number(config.autoCap) : 88;
+
+  state.ui.busy = true;
+  setPrimaryActionsBusy(true);
+  showGlobalStatus({ text: startText, progress: 4, mode: "busy" });
+  startAutoProgress(autoCap);
+
+  const updateProgress = (progress, text) => {
+    if (typeof progress === "number") {
+      setGlobalStatusProgress(progress);
+    }
+    if (text) {
+      showGlobalStatus({ text, progress: state.ui.progress, mode: "busy" });
+    }
+  };
+
+  try {
+    await action(updateProgress);
+    stopAutoProgress();
+    showGlobalStatus({ text: successText, progress: 100, mode: "done" });
+    window.setTimeout(() => hideGlobalStatusIfIdle(false), 900);
+    return true;
+  } catch (error) {
+    stopAutoProgress();
+    const message = `${errorTextPrefix}${buildErrorMessage(error)}`;
+    showGlobalStatus({ text: message, progress: 100, mode: "error" });
+    window.setTimeout(() => hideGlobalStatusIfIdle(false), 2600);
+    throw error;
+  } finally {
+    state.ui.busy = false;
+    setPrimaryActionsBusy(false);
+  }
+}
+
+function setPrimaryActionsBusy(isBusy) {
+  Object.entries(PRIMARY_ACTION_BUSY_LABELS).forEach(([id, busyText]) => {
+    const button = document.getElementById(id);
+    if (!button) {
+      return;
+    }
+
+    if (!button.dataset.defaultText) {
+      button.dataset.defaultText = button.textContent || "";
+    }
+
+    if (isBusy) {
+      button.dataset.prevDisabled = button.disabled ? "1" : "0";
+      button.disabled = true;
+      button.textContent = busyText;
+      return;
+    }
+
+    button.disabled = button.dataset.prevDisabled === "1";
+    button.textContent = button.dataset.defaultText || button.textContent;
+    delete button.dataset.prevDisabled;
+  });
+}
+
+function startAutoProgress(cap) {
+  stopAutoProgress();
+  const normalizedCap = Math.max(15, Math.min(96, Number(cap) || 88));
+  state.ui.autoProgressCap = normalizedCap;
+
+  state.ui.timer = window.setInterval(() => {
+    if (!state.ui.busy || state.ui.progress >= state.ui.autoProgressCap) {
+      return;
+    }
+
+    const remain = state.ui.autoProgressCap - state.ui.progress;
+    const step = remain > 28 ? 3 : remain > 12 ? 2 : 1;
+    setGlobalStatusProgress(state.ui.progress + step);
+  }, 260);
+}
+
+function stopAutoProgress() {
+  if (state.ui.timer) {
+    window.clearInterval(state.ui.timer);
+    state.ui.timer = null;
+  }
+}
+
+function setGlobalStatusProgress(value) {
+  const normalized = Math.max(0, Math.min(100, Math.round(value)));
+  state.ui.progress = normalized;
+
+  const progressBar = document.getElementById("global-status-progress");
+  const percent = document.getElementById("global-status-percent");
+  if (progressBar) {
+    progressBar.style.width = `${normalized}%`;
+  }
+  if (percent) {
+    percent.textContent = `${normalized}%`;
+  }
+}
+
+function showGlobalStatus({ text, progress, mode }) {
+  const statusBar = document.getElementById("global-status");
+  const statusText = document.getElementById("global-status-text");
+  if (!statusBar || !statusText) {
+    return;
+  }
+
+  statusBar.hidden = false;
+  statusBar.classList.remove("busy", "done", "error");
+  statusBar.classList.add(mode || "busy");
+  statusText.textContent = text || "处理中...";
+
+  if (typeof progress === "number") {
+    setGlobalStatusProgress(progress);
+  }
+}
+
+function hideGlobalStatusIfIdle(force) {
+  if (!force && state.ui.busy) {
+    return;
+  }
+
+  const statusBar = document.getElementById("global-status");
+  if (!statusBar) {
+    return;
+  }
+
+  statusBar.hidden = true;
+  statusBar.classList.remove("busy", "done", "error");
+  setGlobalStatusProgress(0);
+}
+
 function showMessage(message, isError) {
   const el = document.getElementById("project-message");
   el.textContent = message;
   el.classList.remove("error", "ok");
   el.classList.add(isError ? "error" : "ok");
+  if (isError) {
+    console.error(`[DocAgent][Project] ${message}`);
+    window.alert(message);
+  }
 }
 
 async function api(url, options = {}) {
-  const response = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      ...options,
+    });
+  } catch (error) {
+    throw new Error(`网络请求失败：${buildErrorMessage(error)}`);
+  }
 
+  const contentType = response.headers.get("content-type") || "";
   if (!response.ok) {
+    if (contentType.includes("application/json")) {
+      const payload = await response.json().catch(() => ({}));
+      const detail = extractApiErrorMessage(payload);
+      throw new Error(detail || `HTTP ${response.status}`);
+    }
     const text = await response.text();
     throw new Error(text || `HTTP ${response.status}`);
   }
 
-  const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
     return response.json();
   }
@@ -610,4 +831,78 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function withErrorHandling(context, action) {
+  return async () => {
+    try {
+      await action();
+    } catch (error) {
+      reportError(context, error);
+    }
+  };
+}
+
+function setupGlobalErrorHandlers() {
+  window.addEventListener("error", (event) => {
+    const err = event.error;
+    if (err && err.__docagentHandled) {
+      return;
+    }
+    const message = buildErrorMessage(err || event.message || "未知错误");
+    showMessage(`发生未处理错误：${message}`, true);
+    console.error("[DocAgent][Project][UnhandledError]", err || event);
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    if (reason && reason.__docagentHandled) {
+      return;
+    }
+    const message = buildErrorMessage(reason);
+    showMessage(`发生未处理 Promise 错误：${message}`, true);
+    console.error("[DocAgent][Project][UnhandledRejection]", reason);
+  });
+}
+
+function reportError(context, error) {
+  markHandled(error);
+  const message = `${context}失败：${buildErrorMessage(error)}`;
+  console.error(`[DocAgent][Project][${context}]`, error);
+  showMessage(message, true);
+}
+
+function buildErrorMessage(error) {
+  if (!error) {
+    return "未知错误";
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error instanceof Error) {
+    return error.message || "未知错误";
+  }
+  return String(error);
+}
+
+function markHandled(error) {
+  if (error && typeof error === "object") {
+    error.__docagentHandled = true;
+  }
+}
+
+function extractApiErrorMessage(payload) {
+  if (!payload) {
+    return "";
+  }
+  if (typeof payload.detail === "string") {
+    return payload.detail;
+  }
+  if (Array.isArray(payload.errors) && payload.errors.length) {
+    return payload.errors.map((item) => item.msg || JSON.stringify(item)).join("; ");
+  }
+  if (typeof payload.message === "string") {
+    return payload.message;
+  }
+  return "";
 }

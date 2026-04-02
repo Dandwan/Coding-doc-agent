@@ -23,6 +23,19 @@
         </div>
       </header>
 
+      <div id="global-status" class="global-status" role="status" aria-live="polite" hidden>
+        <div class="global-status-head">
+          <span class="status-spinner" aria-hidden="true"></span>
+          <span id="global-status-text">AI思考中...</span>
+        </div>
+        <div class="global-status-progress-row">
+          <div class="global-status-progress-track">
+            <div id="global-status-progress" class="global-status-progress-bar"></div>
+          </div>
+          <span id="global-status-percent">0%</span>
+        </div>
+      </div>
+
       <main class="workspace-grid">
         <section class="panel stack">
           <div class="actions">
@@ -47,8 +60,8 @@
 
           <div class="actions">
             <button id="submit-answer" class="teal">确认提交</button>
-            <button id="skip-question" class="ghost">我认为这个问题不需要回答</button>
-            <button id="finish-session" class="secondary">完成并保存对话</button>
+            <button id="skip-question" class="ghost">跳过该问题并不再提出</button>
+            <button id="finish-session" class="secondary">保存对话并生成Agent 开发文档</button>
           </div>
 
           <div>

@@ -2,23 +2,41 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from backend.agent.question_parser import parse_questions_and_options, parse_tag_values
 from backend.api.llm_client import LLMClient
 from backend.config_manager import ConfigManager
 from backend.document.generator import ensure_required_sections, generate_document_from_context
 from backend.document.loader import load_project_document
+from backend.logging_manager import get_logger
 from backend.utils.file_utils import now_iso
 
 
 class ConversationService:
     def __init__(self, config_manager: ConfigManager) -> None:
         self.config_manager = config_manager
+        self.ai_logger = get_logger("ai")
+        self.system_logger = get_logger("system")
 
-    def process_answer(self, project: dict[str, Any], session: dict[str, Any], answer_payload: dict[str, Any]) -> dict[str, Any]:
+    def process_answer(
+        self,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        answer_payload: dict[str, Any],
+        project_sessions: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        project_id = str(project.get("id", "-"))
+        session_id = str(session.get("id", "-"))
         current_question = str(session.get("current_question", {}).get("question", "请描述你的需求"))
         answer_text = self._format_answer(answer_payload)
+        self.ai_logger.info(
+            "dialog_user_input project_id=%s session_id=%s question=%s answer=%s",
+            project_id,
+            session_id,
+            current_question,
+            answer_text,
+        )
 
         history = list(session.get("history", []))
         history.append(
@@ -32,6 +50,13 @@ class ConversationService:
             }
         )
         session["history"] = history
+
+        project_context_text = self._build_project_context_text(
+            current_session_id=session_id,
+            current_session_name=str(session.get("name", "当前会话")),
+            current_history=history,
+            project_sessions=project_sessions or [],
+        )
 
         pending_questions = list(session.get("pending_questions", []))
         if pending_questions:
@@ -57,6 +82,12 @@ class ConversationService:
             session["current_question"] = pending_questions[0]
             session["unresolved_points"] = [item.get("question", "") for item in pending_questions if item.get("question")]
             session["ai_thinks_clear"] = False
+            self.ai_logger.info(
+                "dialog_pending_questions project_id=%s session_id=%s remain=%s",
+                project_id,
+                session_id,
+                len(pending_questions),
+            )
             if user_input:
                 session["last_user_input"] = user_input
             session.pop("last_error", None)
@@ -68,10 +99,33 @@ class ConversationService:
             project_doc_content=project_doc_content,
             user_input=user_input,
             history=history,
+            project_context_text=project_context_text,
+            project_id=project_id,
+            session_id=session_id,
         )
 
         error_text = ai_result.get("error", "")
         questions = ai_result.get("questions", [])
+
+        if error_text:
+            session["pending_questions"] = []
+            session["unresolved_points"] = []
+            session["ai_thinks_clear"] = False
+            session["is_complete"] = False
+            session["current_question"] = {
+                "question": "AI 调用失败，请检查日志与模型配置后重试本轮输入。",
+                "options": [],
+            }
+            session["last_error"] = error_text
+            self.system_logger.error(
+                "dialog_ai_error project_id=%s session_id=%s error=%s",
+                project_id,
+                session_id,
+                error_text,
+            )
+            if user_input:
+                session["last_user_input"] = user_input
+            return session
 
         if questions:
             session["pending_questions"] = questions
@@ -79,6 +133,12 @@ class ConversationService:
             session["unresolved_points"] = [item.get("question", "") for item in questions if item.get("question")]
             session["ai_thinks_clear"] = False
             session["is_complete"] = False
+            self.ai_logger.info(
+                "dialog_questions_generated project_id=%s session_id=%s question_count=%s",
+                project_id,
+                session_id,
+                len(questions),
+            )
         else:
             previous_document = str(session.get("current_document", ""))
             current_document = str(ai_result.get("document_markdown", "")).strip()
@@ -98,21 +158,24 @@ class ConversationService:
 
             session["pending_questions"] = []
             session["current_question"] = {
-                "question": "AI 认为当前需求细节已清晰。你可以继续补充新需求，或点击“完成并保存对话”。",
+                "question": "AI 认为当前需求细节已清晰。你可以继续补充新需求，或点击“保存对话并生成Agent 开发文档”。",
                 "options": [],
             }
             session["unresolved_points"] = []
             session["current_document"] = current_document
             session["ai_thinks_clear"] = True
             session["is_complete"] = False
+            self.ai_logger.info(
+                "dialog_final_document_generated project_id=%s session_id=%s doc_chars=%s",
+                project_id,
+                session_id,
+                len(current_document),
+            )
 
         if user_input:
             session["last_user_input"] = user_input
 
-        if error_text:
-            session["last_error"] = error_text
-        else:
-            session.pop("last_error", None)
+        session.pop("last_error", None)
 
         return session
 
@@ -121,11 +184,12 @@ class ConversationService:
         session["ai_thinks_clear"] = bool(session.get("ai_thinks_clear", False))
         session["user_confirmed_complete"] = True
         session["current_question"] = {
-            "question": "已完成并保存当前会话。你仍可继续补充新需求，系统将重新进入澄清循环。",
+            "question": "已保存当前会话并生成Agent 开发文档。你仍可继续补充新需求，系统将重新进入澄清循环。",
             "options": [],
         }
         session["pending_questions"] = []
         session["unresolved_points"] = []
+        self.system_logger.info("dialog_session_finished session_id=%s", session.get("id", "-"))
         return session
 
     def _run_ai_round(
@@ -136,6 +200,9 @@ class ConversationService:
         project_doc_content: str,
         user_input: str,
         history: list[dict[str, Any]],
+        project_context_text: str,
+        project_id: str,
+        session_id: str,
     ) -> dict[str, Any]:
         placeholders = prompt_settings.get("placeholders", {})
         markers = prompt_settings.get("markers", {})
@@ -145,7 +212,7 @@ class ConversationService:
         option_open = str(markers.get("option_open", "<option>"))
         option_close = str(markers.get("option_close", "</option>"))
 
-        qa_text = self._build_question_and_input_text(history)
+        qa_text = project_context_text.strip() or self._build_question_and_input_text(history)
 
         try:
             clarify_prompt = self._render_template(
@@ -155,7 +222,13 @@ class ConversationService:
                 user_input=user_input,
                 question_and_input=qa_text,
             )
-            clarify_raw = self._query_llm(api_config=config.get("api", {}), prompt=clarify_prompt)
+            clarify_raw = self._query_llm(
+                api_config=config.get("api", {}),
+                prompt=clarify_prompt,
+                stage="clarify",
+                project_id=project_id,
+                session_id=session_id,
+            )
 
             parsed_questions = parse_questions_and_options(
                 clarify_raw,
@@ -182,7 +255,13 @@ class ConversationService:
                     f"\n\n请仅用标记输出该问题选项："
                     f"{option_open}选项文本{option_close}。"
                 )
-                options_raw = self._query_llm(api_config=config.get("api", {}), prompt=options_prompt)
+                options_raw = self._query_llm(
+                    api_config=config.get("api", {}),
+                    prompt=options_prompt,
+                    stage="options",
+                    project_id=project_id,
+                    session_id=session_id,
+                )
                 options = parse_tag_values(options_raw, option_open, option_close)
                 if not options:
                     options = [str(item).strip() for item in question_item.get("options", []) if str(item).strip()]
@@ -204,13 +283,32 @@ class ConversationService:
                 "\n# 项目功能清单\n# 项目细节\n# 代码架构与实现方式"
                 "\n同时在文档中必须明确：将要开发的新功能、开发步骤、细节要求。"
             )
-            final_raw = self._query_llm(api_config=config.get("api", {}), prompt=final_prompt)
+            final_raw = self._query_llm(
+                api_config=config.get("api", {}),
+                prompt=final_prompt,
+                stage="final_doc",
+                project_id=project_id,
+                session_id=session_id,
+            )
             final_doc = self._strip_code_fence(final_raw)
             return {"questions": [], "document_markdown": final_doc, "error": ""}
         except Exception as exc:
+            self.system_logger.exception(
+                "dialog_round_failed project_id=%s session_id=%s",
+                project_id,
+                session_id,
+            )
             return {"questions": [], "document_markdown": "", "error": str(exc)}
 
-    def _query_llm(self, *, api_config: dict[str, Any], prompt: str) -> str:
+    def _query_llm(
+        self,
+        *,
+        api_config: dict[str, Any],
+        prompt: str,
+        stage: str,
+        project_id: str,
+        session_id: str,
+    ) -> str:
         client = LLMClient(
             url=str(api_config.get("url", "")),
             api_key=str(api_config.get("api_key", "")),
@@ -220,7 +318,32 @@ class ConversationService:
             max_retries=int(api_config.get("max_retries", 2)),
         )
         messages = [{"role": "user", "content": prompt}]
-        return client.get_response(messages)
+        self.ai_logger.info(
+            "dialog_ai_request project_id=%s session_id=%s stage=%s model=%s prompt=%s",
+            project_id,
+            session_id,
+            stage,
+            api_config.get("model", ""),
+            prompt,
+        )
+        response = client.get_response(messages)
+        if not str(response).strip():
+            self.system_logger.error(
+                "dialog_ai_empty_response project_id=%s session_id=%s stage=%s",
+                project_id,
+                session_id,
+                stage,
+            )
+            raise RuntimeError(f"AI 在阶段 {stage} 未返回任何内容")
+
+        self.ai_logger.info(
+            "dialog_ai_response project_id=%s session_id=%s stage=%s response=%s",
+            project_id,
+            session_id,
+            stage,
+            response,
+        )
+        return response
 
     def _render_template(
         self,
@@ -251,9 +374,76 @@ class ConversationService:
             lines.append(f"[{index}] 回答: {answer}")
         return "\n".join(lines)
 
+    def _build_project_context_text(
+        self,
+        *,
+        current_session_id: str,
+        current_session_name: str,
+        current_history: list[dict[str, Any]],
+        project_sessions: list[dict[str, Any]],
+    ) -> str:
+        session_map: dict[str, dict[str, Any]] = {}
+        for raw_session in project_sessions:
+            if not isinstance(raw_session, dict):
+                continue
+
+            sid = str(raw_session.get("id", "")).strip()
+            if not sid:
+                continue
+            session_map[sid] = raw_session
+
+        current_payload = dict(session_map.get(current_session_id, {}))
+        current_payload["id"] = current_session_id
+        current_payload["name"] = current_session_name or current_payload.get("name", "当前会话")
+        current_payload["history"] = current_history
+        session_map[current_session_id] = current_payload
+
+        ordered_sessions = sorted(
+            session_map.values(),
+            key=lambda item: (
+                str(item.get("created_at", "")),
+                str(item.get("updated_at", "")),
+                str(item.get("id", "")),
+            ),
+        )
+
+        lines: list[str] = []
+        for session_index, session_item in enumerate(ordered_sessions, start=1):
+            sid = str(session_item.get("id", "")).strip()
+            if not sid:
+                continue
+
+            name = str(session_item.get("name", sid)).strip() or sid
+            prefix = "当前会话" if sid == current_session_id else "关联会话"
+            lines.append(f"[{prefix}{session_index}] 名称: {name} (id={sid})")
+
+            history_lines = self._render_history_lines(session_item.get("history", []), session_index)
+            if not history_lines:
+                lines.append(f"[{prefix}{session_index}] 暂无历史")
+            else:
+                lines.extend(history_lines)
+            lines.append("")
+
+        return "\n".join(lines).strip()
+
+    def _render_history_lines(self, history: Any, session_index: int) -> list[str]:
+        if not isinstance(history, list):
+            return []
+
+        lines: list[str] = []
+        for turn_index, turn in enumerate(history, start=1):
+            if not isinstance(turn, dict):
+                continue
+
+            question = str(turn.get("question", "")).strip() or "(无问题文本)"
+            answer = str(turn.get("answer", "")).strip() or "(无回答文本)"
+            lines.append(f"[会话{session_index}-回合{turn_index}] 问题: {question}")
+            lines.append(f"[会话{session_index}-回合{turn_index}] 回答: {answer}")
+        return lines
+
     def _normalize_user_input(self, answer_payload: dict[str, Any]) -> str:
         if answer_payload.get("skip_question"):
-            return "用户选择跳过该问题"
+            return "用户选择跳过该问题并不再提出"
 
         options = [str(item).strip() for item in answer_payload.get("selected_options", []) if str(item).strip()]
         text_input = str(answer_payload.get("text_input", "")).strip()

@@ -30,6 +30,11 @@ class ConfigManager:
                 "proactive_push_enabled_default": False,
                 "proactive_push_branch_default": "",
             },
+            "logging": {
+                "root_dir": str((Path.home() / ".docagent" / "logs").resolve()),
+                "console_level": "INFO",
+                "enable_console": True,
+            },
             "prompt_settings": {
                 "clarify_prompt_template": (
                     "你是需求澄清助手。请基于以下上下文，识别仍不清晰且可能导致开发方向偏差的细节。"

@@ -4,6 +4,8 @@ const state = {
 };
 
 document.addEventListener("DOMContentLoaded", () => {
+  setupGlobalErrorHandlers();
+
   const useDefault = document.getElementById("use-default-folder");
   const folderInput = document.getElementById("project-folder");
   const pickFolderBtn = document.getElementById("pick-project-folder");
@@ -12,16 +14,12 @@ document.addEventListener("DOMContentLoaded", () => {
     window.location.href = "/settings";
   });
 
-  pickFolderBtn.addEventListener("click", async () => {
-    try {
-      const selected = await pickFolder(folderInput.value.trim());
-      if (selected) {
-        folderInput.value = selected;
-      }
-    } catch (error) {
-      showCreateMessage(`选择文件夹失败：${error.message}`, true);
+  pickFolderBtn.addEventListener("click", withErrorHandling("选择项目文件夹", async () => {
+    const selected = await pickFolder(folderInput.value.trim());
+    if (selected) {
+      folderInput.value = selected;
     }
-  });
+  }));
 
   useDefault.addEventListener("change", () => {
     folderInput.disabled = useDefault.checked;
@@ -31,12 +29,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  document.getElementById("create-project-form").addEventListener("submit", onCreateProject);
+  document.getElementById("create-project-form").addEventListener("submit", withErrorHandling("创建项目", onCreateProject));
 
   folderInput.disabled = useDefault.checked;
   pickFolderBtn.disabled = useDefault.checked;
   bootstrap().catch((error) => {
-    showCreateMessage(`初始化失败：${error.message}`, true);
+    reportError("初始化", error);
   });
 });
 
@@ -80,7 +78,7 @@ function renderProjects() {
       window.location.href = `/project?project_id=${encodeURIComponent(project.id)}`;
     });
 
-    card.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+    card.querySelector('[data-action="delete"]').addEventListener("click", withErrorHandling("删除项目索引", async () => {
       const confirmed = window.confirm("确认将项目从列表中移除？不会删除项目文件夹。");
       if (!confirmed) {
         return;
@@ -89,7 +87,7 @@ function renderProjects() {
         method: "DELETE",
       });
       await loadProjects();
-    });
+    }));
 
     list.appendChild(card);
   }
@@ -136,23 +134,37 @@ function showCreateMessage(message, isError) {
   el.textContent = message;
   el.classList.remove("error", "ok");
   el.classList.add(isError ? "error" : "ok");
+  if (isError) {
+    console.error(`[DocAgent][Home] ${message}`);
+    window.alert(message);
+  }
 }
 
 async function api(url, options = {}) {
-  const response = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      ...options,
+    });
+  } catch (error) {
+    throw new Error(`网络请求失败：${buildErrorMessage(error)}`);
+  }
 
+  const contentType = response.headers.get("content-type") || "";
   if (!response.ok) {
+    if (contentType.includes("application/json")) {
+      const payload = await response.json().catch(() => ({}));
+      const detail = extractApiErrorMessage(payload);
+      throw new Error(detail || `HTTP ${response.status}`);
+    }
     const text = await response.text();
     throw new Error(text || `HTTP ${response.status}`);
   }
 
-  const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
     return response.json();
   }
@@ -174,4 +186,78 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function withErrorHandling(context, action) {
+  return async (event) => {
+    try {
+      await action(event);
+    } catch (error) {
+      reportError(context, error);
+    }
+  };
+}
+
+function setupGlobalErrorHandlers() {
+  window.addEventListener("error", (event) => {
+    const err = event.error;
+    if (err && err.__docagentHandled) {
+      return;
+    }
+    const message = buildErrorMessage(err || event.message || "未知错误");
+    showCreateMessage(`发生未处理错误：${message}`, true);
+    console.error("[DocAgent][Home][UnhandledError]", err || event);
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    if (reason && reason.__docagentHandled) {
+      return;
+    }
+    const message = buildErrorMessage(reason);
+    showCreateMessage(`发生未处理 Promise 错误：${message}`, true);
+    console.error("[DocAgent][Home][UnhandledRejection]", reason);
+  });
+}
+
+function reportError(context, error) {
+  markHandled(error);
+  const message = `${context}失败：${buildErrorMessage(error)}`;
+  console.error(`[DocAgent][Home][${context}]`, error);
+  showCreateMessage(message, true);
+}
+
+function buildErrorMessage(error) {
+  if (!error) {
+    return "未知错误";
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error instanceof Error) {
+    return error.message || "未知错误";
+  }
+  return String(error);
+}
+
+function markHandled(error) {
+  if (error && typeof error === "object") {
+    error.__docagentHandled = true;
+  }
+}
+
+function extractApiErrorMessage(payload) {
+  if (!payload) {
+    return "";
+  }
+  if (typeof payload.detail === "string") {
+    return payload.detail;
+  }
+  if (Array.isArray(payload.errors) && payload.errors.length) {
+    return payload.errors.map((item) => item.msg || JSON.stringify(item)).join("; ");
+  }
+  if (typeof payload.message === "string") {
+    return payload.message;
+  }
+  return "";
 }

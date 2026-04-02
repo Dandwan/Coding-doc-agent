@@ -32,6 +32,23 @@ class SessionManager:
             )
         return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)
 
+    def list_session_details(self) -> list[dict]:
+        details: list[dict] = []
+        for file_path in self.sessions_dir.glob("*.json"):
+            data = read_json(file_path, {})
+            if not data:
+                continue
+            details.append(data)
+
+        return sorted(
+            details,
+            key=lambda item: (
+                str(item.get("updated_at", "")),
+                str(item.get("created_at", "")),
+                str(item.get("id", "")),
+            ),
+        )
+
     def create_session(
         self,
         name: str | None,

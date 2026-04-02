@@ -24,6 +24,12 @@ class WorkflowSettings(BaseModel):
     proactive_push_branch_default: str = ""
 
 
+class LoggingSettings(BaseModel):
+    root_dir: str
+    console_level: str = "INFO"
+    enable_console: bool = True
+
+
 class PromptPlaceholderSettings(BaseModel):
     project_document: str = "</projectDocument>"
     user_input: str = "</userInput>"
@@ -50,6 +56,7 @@ class AppConfig(BaseModel):
     api: APISettings
     doc_paths: DocPathSettings
     workflow: WorkflowSettings
+    logging: LoggingSettings
     prompt_settings: PromptSettings
 
 
@@ -58,6 +65,7 @@ class AppConfigUpdate(BaseModel):
     api: Optional[dict[str, Any]] = None
     doc_paths: Optional[dict[str, Any]] = None
     workflow: Optional[dict[str, Any]] = None
+    logging: Optional[dict[str, Any]] = None
     prompt_settings: Optional[dict[str, Any]] = None
 
 

@@ -1,34 +1,43 @@
 document.addEventListener("DOMContentLoaded", () => {
+  setupGlobalErrorHandlers();
+
   document.getElementById("go-home").addEventListener("click", () => {
     window.location.href = "/";
   });
 
-  document.getElementById("pick-projects-root").addEventListener("click", async () => {
-    try {
+  document
+    .getElementById("pick-projects-root")
+    .addEventListener("click", withErrorHandling("选择项目根目录", async () => {
       const current = document.getElementById("projects-root").value.trim();
       const selected = await pickFolder(current);
       if (selected) {
         document.getElementById("projects-root").value = selected;
       }
-    } catch (error) {
-      showMessage(`选择文件夹失败：${error.message}`, true);
-    }
-  });
+    }));
 
-  document.getElementById("pick-agent-doc-dir").addEventListener("click", async () => {
-    try {
+  document
+    .getElementById("pick-log-root-dir")
+    .addEventListener("click", withErrorHandling("选择日志目录", async () => {
+      const current = document.getElementById("log-root-dir").value.trim();
+      const selected = await pickFolder(current);
+      if (selected) {
+        document.getElementById("log-root-dir").value = selected;
+      }
+    }));
+
+  document
+    .getElementById("pick-agent-doc-dir")
+    .addEventListener("click", withErrorHandling("选择 Agent 文档目录", async () => {
       const current = document.getElementById("agent-doc-dir").value.trim();
       const selected = await pickFolder(current);
       if (selected) {
         document.getElementById("agent-doc-dir").value = selected;
       }
-    } catch (error) {
-      showMessage(`选择文件夹失败：${error.message}`, true);
-    }
-  });
+    }));
 
-  document.getElementById("pick-project-doc-path").addEventListener("click", async () => {
-    try {
+  document
+    .getElementById("pick-project-doc-path")
+    .addEventListener("click", withErrorHandling("选择项目开发文档目录", async () => {
       const input = document.getElementById("project-doc-path");
       const current = input.value.trim();
       const initialDir = current.toLowerCase().endsWith(".md")
@@ -38,15 +47,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (selected) {
         input.value = toProjectDocPath(selected);
       }
-    } catch (error) {
-      showMessage(`选择文件夹失败：${error.message}`, true);
-    }
-  });
+    }));
 
-  document.getElementById("save-config").addEventListener("click", onSaveConfig);
+  document.getElementById("save-config").addEventListener("click", withErrorHandling("保存全局配置", onSaveConfig));
 
   loadConfig().catch((error) => {
-    showMessage(`加载配置失败：${error.message}`, true);
+    reportError("加载配置", error);
   });
 });
 
@@ -54,6 +60,7 @@ async function loadConfig() {
   const config = await api("/api/config");
 
   document.getElementById("projects-root").value = config.projects_root || "";
+  document.getElementById("log-root-dir").value = config.logging?.root_dir || "";
   document.getElementById("api-url").value = config.api?.url || "";
   document.getElementById("api-key").value = config.api?.api_key || "";
   document.getElementById("api-model").value = config.api?.model || "";
@@ -110,6 +117,9 @@ async function onSaveConfig() {
       proactive_push_enabled_default: document.getElementById("global-proactive-push-enabled").checked,
       proactive_push_branch_default: document.getElementById("global-proactive-push-branch").value.trim(),
     },
+    logging: {
+      root_dir: document.getElementById("log-root-dir").value.trim(),
+    },
     prompt_settings: {
       clarify_prompt_template: document.getElementById("clarify-prompt-template").value,
       options_prompt_template: document.getElementById("options-prompt-template").value,
@@ -130,6 +140,10 @@ async function onSaveConfig() {
 
   if (!payload.projects_root) {
     showMessage("默认项目根目录不能为空", true);
+    return;
+  }
+  if (!payload.logging.root_dir) {
+    showMessage("日志保存根目录不能为空", true);
     return;
   }
 
@@ -162,23 +176,37 @@ function showMessage(message, isError) {
   el.textContent = message;
   el.classList.remove("error", "ok");
   el.classList.add(isError ? "error" : "ok");
+  if (isError) {
+    console.error(`[DocAgent][Settings] ${message}`);
+    window.alert(message);
+  }
 }
 
 async function api(url, options = {}) {
-  const response = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      ...options,
+    });
+  } catch (error) {
+    throw new Error(`网络请求失败：${buildErrorMessage(error)}`);
+  }
 
+  const contentType = response.headers.get("content-type") || "";
   if (!response.ok) {
+    if (contentType.includes("application/json")) {
+      const payload = await response.json().catch(() => ({}));
+      const detail = extractApiErrorMessage(payload);
+      throw new Error(detail || `HTTP ${response.status}`);
+    }
     const text = await response.text();
     throw new Error(text || `HTTP ${response.status}`);
   }
 
-  const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
     return response.json();
   }
@@ -200,4 +228,78 @@ function toProjectDocPath(folder) {
   const normalized = folder.endsWith("\\") || folder.endsWith("/") ? folder.slice(0, -1) : folder;
   const sep = normalized.includes("\\") ? "\\" : "/";
   return `${normalized}${sep}PROJECT.md`;
+}
+
+function withErrorHandling(context, action) {
+  return async () => {
+    try {
+      await action();
+    } catch (error) {
+      reportError(context, error);
+    }
+  };
+}
+
+function setupGlobalErrorHandlers() {
+  window.addEventListener("error", (event) => {
+    const err = event.error;
+    if (err && err.__docagentHandled) {
+      return;
+    }
+    const message = buildErrorMessage(err || event.message || "未知错误");
+    showMessage(`发生未处理错误：${message}`, true);
+    console.error("[DocAgent][Settings][UnhandledError]", err || event);
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    if (reason && reason.__docagentHandled) {
+      return;
+    }
+    const message = buildErrorMessage(reason);
+    showMessage(`发生未处理 Promise 错误：${message}`, true);
+    console.error("[DocAgent][Settings][UnhandledRejection]", reason);
+  });
+}
+
+function reportError(context, error) {
+  markHandled(error);
+  const message = `${context}失败：${buildErrorMessage(error)}`;
+  console.error(`[DocAgent][Settings][${context}]`, error);
+  showMessage(message, true);
+}
+
+function buildErrorMessage(error) {
+  if (!error) {
+    return "未知错误";
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error instanceof Error) {
+    return error.message || "未知错误";
+  }
+  return String(error);
+}
+
+function markHandled(error) {
+  if (error && typeof error === "object") {
+    error.__docagentHandled = true;
+  }
+}
+
+function extractApiErrorMessage(payload) {
+  if (!payload) {
+    return "";
+  }
+  if (typeof payload.detail === "string") {
+    return payload.detail;
+  }
+  if (Array.isArray(payload.errors) && payload.errors.length) {
+    return payload.errors.map((item) => item.msg || JSON.stringify(item)).join("; ");
+  }
+  if (typeof payload.message === "string") {
+    return payload.message;
+  }
+  return "";
 }

@@ -50,6 +50,8 @@ def test_config_read_and_update(client: tuple[TestClient, Path], tmp_path: Path)
     config = config_resp.json()
     assert "projects_root" in config
     assert config["doc_paths"]["project_doc"] == "docs/project/PROJECT.md"
+    assert "logging" in config
+    assert "root_dir" in config["logging"]
 
     new_root = tmp_path / "projects_root"
     save_resp = c.post(
@@ -62,6 +64,9 @@ def test_config_read_and_update(client: tuple[TestClient, Path], tmp_path: Path)
                 "proactive_push_enabled_default": True,
                 "proactive_push_branch_default": "release/test",
             },
+            "logging": {
+                "root_dir": str(tmp_path / "logs"),
+            },
         },
     )
     assert save_resp.status_code == 200
@@ -72,6 +77,7 @@ def test_config_read_and_update(client: tuple[TestClient, Path], tmp_path: Path)
     assert loaded["doc_paths"]["agent_doc_dir"] == "docs/agent_versions"
     assert loaded["workflow"]["proactive_push_enabled_default"] is True
     assert loaded["workflow"]["proactive_push_branch_default"] == "release/test"
+    assert loaded["logging"]["root_dir"] == str(tmp_path / "logs")
     assert "clarify_prompt_template" in loaded["prompt_settings"]
     assert "markers" in loaded["prompt_settings"]
     assert loaded["prompt_settings"]["markers"]["question_open"] == "<question>"
@@ -130,6 +136,39 @@ def test_pick_folder_endpoint(client: tuple[TestClient, Path], monkeypatch: pyte
     assert payload["path"] == expected_path
 
 
+def test_logging_structure_created_after_config_update(client: tuple[TestClient, Path], tmp_path: Path) -> None:
+    c, _ = client
+
+    log_root = tmp_path / "runtime_logs"
+    resp = c.post(
+        "/api/config",
+        json={
+            "logging": {
+                "root_dir": str(log_root),
+                "console_level": "DEBUG",
+            }
+        },
+    )
+    assert resp.status_code == 200
+
+    payload = resp.json()
+    assert payload["logging"]["root_dir"] == str(log_root)
+    assert payload["active_log_period_dir"]
+
+    period_dir = Path(payload["active_log_period_dir"])
+    assert period_dir.exists()
+
+    level_dir = period_dir / "levels"
+    type_dir = period_dir / "types"
+    assert (level_dir / "debug.log").exists()
+    assert (level_dir / "info.log").exists()
+    assert (level_dir / "warning.log").exists()
+    assert (level_dir / "error.log").exists()
+    assert (type_dir / "system.log").exists()
+    assert (type_dir / "api.log").exists()
+    assert (type_dir / "ai.log").exists()
+
+
 def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Path], tmp_path: Path) -> None:
     c, _ = client
 
@@ -137,7 +176,7 @@ def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Pa
 
     state = {"clarify_count": 0}
 
-    def fake_query_llm(*, api_config, prompt):
+    def fake_query_llm(*, api_config, prompt, **kwargs):
         if "请仅用标记输出该问题选项" in prompt:
             if "目标用户是谁" in prompt:
                 return "<option>面向内部运营人员</option><option>面向普通终端用户</option><option>双角色协作</option>"
@@ -163,7 +202,7 @@ def test_session_answer_version_compare_and_restore(client: tuple[TestClient, Pa
         if state["clarify_count"] == 1:
             return "<question>目标用户是谁？</question><question>输入输出边界是什么？</question>"
         if state["clarify_count"] == 2:
-            return ""
+            return "需求已清晰，无需继续提问。"
         return "<question>新增需求会影响哪些现有模块？</question>"
 
     main.conversation_service._query_llm = fake_query_llm
@@ -293,7 +332,7 @@ def test_reverify_when_new_requirements_after_complete(client: tuple[TestClient,
 
     calls = {"clarify": 0}
 
-    def fake_query_llm(*, api_config, prompt):
+    def fake_query_llm(*, api_config, prompt, **kwargs):
         if "请仅用标记输出该问题选项" in prompt:
             return "<option>场景A</option><option>场景B</option><option>场景C</option>"
 
@@ -304,7 +343,7 @@ def test_reverify_when_new_requirements_after_complete(client: tuple[TestClient,
         if calls["clarify"] == 1:
             return "<question>请补充关键边界</question>"
         if calls["clarify"] == 2:
-            return ""
+            return "需求已清晰，无需继续提问。"
         return "<question>新增需求影响范围</question>"
 
     monkeypatch.setattr(main.conversation_service, "_query_llm", fake_query_llm)
@@ -342,3 +381,87 @@ def test_reverify_when_new_requirements_after_complete(client: tuple[TestClient,
     assert calls["clarify"] == 3
     assert second_session["is_complete"] is False
     assert "新增需求影响范围" in second_session["unresolved_points"]
+
+
+def test_answer_returns_error_when_ai_output_empty(client: tuple[TestClient, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    c, _ = client
+    folder = tmp_path / "empty_output_project"
+    created = _create_project(c, folder, name="EmptyOutputProject")
+    project_id = created["id"]
+
+    session_resp = c.post(f"/api/projects/{project_id}/sessions", json={"name": "空输出检测"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+
+    import backend.main as main  # noqa: WPS433
+
+    def fake_query_llm(*, api_config, prompt, **kwargs):
+        raise RuntimeError("AI 在阶段 clarify 未返回任何内容")
+
+    monkeypatch.setattr(main.conversation_service, "_query_llm", fake_query_llm)
+
+    answer_resp = c.post(
+        f"/api/projects/{project_id}/sessions/{session_id}/answer",
+        json={"selected_options": [], "text_input": "请帮我整理需求", "skip_question": False},
+    )
+    assert answer_resp.status_code == 502
+    assert "AI 调用失败" in answer_resp.json().get("detail", "")
+
+
+def test_project_wide_context_is_used_across_sessions(
+    client: tuple[TestClient, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    c, _ = client
+    folder = tmp_path / "project_wide_context"
+    created = _create_project(c, folder, name="ContextProject")
+    project_id = created["id"]
+
+    import backend.main as main  # noqa: WPS433
+
+    clarify_prompts: list[str] = []
+
+    def fake_query_llm(*, api_config, prompt, stage, **kwargs):
+        if stage == "clarify":
+            clarify_prompts.append(prompt)
+            return "需求已清晰，无需继续提问。"
+        if stage == "final_doc":
+            return (
+                "# 项目功能清单\n\n"
+                "- 跨会话上下文验证\n\n"
+                "# 项目细节\n\n"
+                "- 需要保留历史\n\n"
+                "# 代码架构与实现方式\n\n"
+                "- FastAPI\n"
+            )
+        return ""
+
+    monkeypatch.setattr(main.conversation_service, "_query_llm", fake_query_llm)
+
+    session_a = c.post(f"/api/projects/{project_id}/sessions", json={"name": "第一会话"})
+    assert session_a.status_code == 200
+    session_a_id = session_a.json()["id"]
+
+    answer_a = c.post(
+        f"/api/projects/{project_id}/sessions/{session_a_id}/answer",
+        json={"selected_options": [], "text_input": "第一轮需求说明", "skip_question": False},
+    )
+    assert answer_a.status_code == 200
+
+    session_b = c.post(f"/api/projects/{project_id}/sessions", json={"name": "第二会话"})
+    assert session_b.status_code == 200
+    session_b_id = session_b.json()["id"]
+
+    answer_b = c.post(
+        f"/api/projects/{project_id}/sessions/{session_b_id}/answer",
+        json={"selected_options": [], "text_input": "第二轮需求说明", "skip_question": False},
+    )
+    assert answer_b.status_code == 200
+
+    assert len(clarify_prompts) >= 2
+    second_prompt = clarify_prompts[-1]
+    assert "第一会话" in second_prompt
+    assert "第一轮需求说明" in second_prompt
+    assert "第二会话" in second_prompt
+    assert "第二轮需求说明" in second_prompt

@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.agent.conversation import ConversationService
 from backend.config_manager import ConfigManager
+from backend.logging_manager import LOG_MANAGER, get_logger
 from backend.models import (
     AnswerRequest,
     AnswerResponse,
@@ -43,12 +48,123 @@ app.add_middleware(
 app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIR)), name="assets")
 
 config_manager = ConfigManager()
+_initial_config = config_manager.load()
+_log_period_dir = LOG_MANAGER.configure(_initial_config.get("logging", {}))
+system_logger = get_logger("system")
+api_logger = get_logger("api")
+system_logger.info("DocAgent 服务已启动，日志目录: %s", _log_period_dir)
+
 project_manager = ProjectManager(config_manager)
 conversation_service = ConversationService(config_manager)
 
 
 class PickFolderRequest(BaseModel):
     initial_dir: Optional[str] = None
+
+
+def _request_id(request: Request) -> str:
+    return str(getattr(request.state, "request_id", "-"))
+
+
+@app.middleware("http")
+async def request_log_middleware(request: Request, call_next):
+    rid = uuid4().hex[:12]
+    request.state.request_id = rid
+    started = time.perf_counter()
+
+    client_host = request.client.host if request.client else "-"
+    api_logger.info(
+        "request_started id=%s method=%s path=%s query=%s content_length=%s client=%s",
+        rid,
+        request.method,
+        request.url.path,
+        request.url.query,
+        request.headers.get("content-length", "0"),
+        client_host,
+    )
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        cost_ms = (time.perf_counter() - started) * 1000
+        api_logger.exception(
+            "request_failed id=%s method=%s path=%s cost_ms=%.2f",
+            rid,
+            request.method,
+            request.url.path,
+            cost_ms,
+        )
+        raise
+
+    cost_ms = (time.perf_counter() - started) * 1000
+    response.headers["X-Request-Id"] = rid
+    api_logger.info(
+        "request_finished id=%s method=%s path=%s status=%s cost_ms=%.2f",
+        rid,
+        request.method,
+        request.url.path,
+        response.status_code,
+        cost_ms,
+    )
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    rid = _request_id(request)
+    api_logger.warning(
+        "request_validation_error id=%s method=%s path=%s detail=%s",
+        rid,
+        request.method,
+        request.url.path,
+        exc.errors(),
+    )
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "请求参数校验失败",
+            "errors": exc.errors(),
+            "request_id": rid,
+        },
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    rid = _request_id(request)
+    api_logger.warning(
+        "http_exception id=%s method=%s path=%s status=%s detail=%s",
+        rid,
+        request.method,
+        request.url.path,
+        exc.status_code,
+        exc.detail,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": exc.detail,
+            "request_id": rid,
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    rid = _request_id(request)
+    system_logger.exception(
+        "unhandled_exception id=%s method=%s path=%s",
+        rid,
+        request.method,
+        request.url.path,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "服务器内部错误，请查看日志。",
+            "request_id": rid,
+        },
+    )
 
 
 def _project_or_404(project_id: str) -> dict:
@@ -130,8 +246,18 @@ def get_config() -> dict:
 
 @app.post("/api/config")
 def save_config(payload: AppConfigUpdate) -> dict:
-    updated = config_manager.update(payload.model_dump(exclude_none=True))
-    return updated
+    patch = payload.model_dump(exclude_none=True)
+    logging_patch = patch.get("logging", {})
+    if "root_dir" in logging_patch and not str(logging_patch.get("root_dir", "")).strip():
+        raise HTTPException(status_code=400, detail="日志保存根目录不能为空")
+
+    updated = config_manager.update(patch)
+    log_period_dir = LOG_MANAGER.configure(updated.get("logging", {}))
+    system_logger.info("全局配置已更新，当前日志目录: %s", log_period_dir)
+    return {
+        **updated,
+        "active_log_period_dir": str(log_period_dir),
+    }
 
 
 @app.get("/api/projects")
@@ -147,7 +273,18 @@ def create_project(payload: ProjectCreateRequest) -> dict:
         root = Path(config["projects_root"]).expanduser().resolve()
         folder = str(root / _safe_folder_name(payload.name))
 
-    created = project_manager.create_project(payload.name, folder)
+    try:
+        created = project_manager.create_project(payload.name, folder)
+    except OSError as exc:
+        system_logger.error("project_create_failed name=%s folder=%s error=%s", payload.name, folder, exc)
+        raise HTTPException(status_code=400, detail=f"项目创建失败: {exc}") from None
+
+    system_logger.info(
+        "project_created id=%s name=%s folder=%s",
+        created.get("id"),
+        created.get("name"),
+        created.get("folder"),
+    )
     return created
 
 
@@ -172,8 +309,12 @@ def update_project(project_id: str, payload: ProjectUpdateRequest) -> dict:
         )
     except ProjectNotFoundError:
         raise HTTPException(status_code=404, detail="项目不存在") from None
+    except OSError as exc:
+        system_logger.error("project_update_failed id=%s error=%s", project_id, exc)
+        raise HTTPException(status_code=400, detail=f"项目更新失败: {exc}") from None
 
     sessions = _session_manager(updated).list_sessions()
+    system_logger.info("project_updated id=%s name=%s", project_id, updated.get("name"))
     return {**updated, "sessions": sessions}
 
 
@@ -182,6 +323,7 @@ def delete_project(project_id: str) -> dict:
     deleted = project_manager.delete_project(project_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="项目不存在")
+    system_logger.info("project_deleted id=%s", project_id)
     return {"ok": True}
 
 
@@ -218,6 +360,7 @@ def create_session(project_id: str, payload: SessionCreateRequest) -> dict:
         version_name = _version_manager(project).save_version(session["current_document"])
         session["current_version"] = version_name
     saved = manager.save_session(session["id"], session)
+    system_logger.info("session_created project_id=%s session_id=%s", project_id, saved.get("id"))
     return saved
 
 
@@ -236,7 +379,9 @@ def rename_session(project_id: str, session_id: str, payload: SessionRenameReque
     project = _project_or_404(project_id)
     manager = _session_manager(project)
     try:
-        return manager.rename_session(session_id, payload.name)
+        renamed = manager.rename_session(session_id, payload.name)
+        system_logger.info("session_renamed project_id=%s session_id=%s", project_id, session_id)
+        return renamed
     except SessionNotFoundError:
         raise HTTPException(status_code=404, detail="会话不存在") from None
     except ValueError as exc:
@@ -251,6 +396,7 @@ def delete_session(project_id: str, session_id: str) -> dict:
         manager.delete_session(session_id)
     except SessionNotFoundError:
         raise HTTPException(status_code=404, detail="会话不存在") from None
+    system_logger.info("session_deleted project_id=%s session_id=%s", project_id, session_id)
     return {"ok": True}
 
 
@@ -264,11 +410,28 @@ def answer(project_id: str, session_id: str, payload: AnswerRequest) -> dict:
     except SessionNotFoundError:
         raise HTTPException(status_code=404, detail="会话不存在") from None
 
-    updated = conversation_service.process_answer(project, session, payload.model_dump())
+    project_sessions = manager.list_session_details()
+    updated = conversation_service.process_answer(
+        project,
+        session,
+        payload.model_dump(),
+        project_sessions=project_sessions,
+    )
     if str(updated.get("current_document", "")).strip():
         version_name = _version_manager(project).save_version(updated.get("current_document", ""))
         updated["current_version"] = version_name
     saved = manager.save_session(session_id, updated)
+    system_logger.info(
+        "session_answered project_id=%s session_id=%s is_complete=%s ai_thinks_clear=%s",
+        project_id,
+        session_id,
+        bool(saved.get("is_complete", False)),
+        bool(saved.get("ai_thinks_clear", False)),
+    )
+
+    if str(saved.get("last_error", "")).strip():
+        raise HTTPException(status_code=502, detail=f"AI 调用失败: {saved['last_error']}")
+
     return {"session": saved}
 
 
@@ -288,6 +451,7 @@ def finish_session(project_id: str, session_id: str) -> dict:
         finished["current_version"] = version_name
 
     saved = manager.save_session(session_id, finished)
+    system_logger.info("session_finished project_id=%s session_id=%s", project_id, session_id)
     return saved
 
 
