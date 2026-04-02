@@ -408,13 +408,13 @@ def test_answer_returns_error_when_ai_output_empty(client: tuple[TestClient, Pat
     assert "AI 调用失败" in answer_resp.json().get("detail", "")
 
 
-def test_project_wide_context_is_used_across_sessions(
+def test_session_context_is_isolated_across_sessions(
     client: tuple[TestClient, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     c, _ = client
-    folder = tmp_path / "project_wide_context"
+    folder = tmp_path / "session_isolated_context"
     created = _create_project(c, folder, name="ContextProject")
     project_id = created["id"]
 
@@ -429,7 +429,7 @@ def test_project_wide_context_is_used_across_sessions(
         if stage == "final_doc":
             return (
                 "# 项目功能清单\n\n"
-                "- 跨会话上下文验证\n\n"
+                "- 会话隔离上下文验证\n\n"
                 "# 项目细节\n\n"
                 "- 需要保留历史\n\n"
                 "# 代码架构与实现方式\n\n"
@@ -460,8 +460,73 @@ def test_project_wide_context_is_used_across_sessions(
     assert answer_b.status_code == 200
 
     assert len(clarify_prompts) >= 2
+    first_prompt = clarify_prompts[0]
     second_prompt = clarify_prompts[-1]
-    assert "第一会话" in second_prompt
-    assert "第一轮需求说明" in second_prompt
+
+    assert "第一会话" in first_prompt
+    assert "第一轮需求说明" in first_prompt
+
     assert "第二会话" in second_prompt
     assert "第二轮需求说明" in second_prompt
+    assert "第一会话" not in second_prompt
+    assert "第一轮需求说明" not in second_prompt
+
+
+def test_finish_calls_ai_with_full_current_session_context(
+    client: tuple[TestClient, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    c, _ = client
+    folder = tmp_path / "finish_ai_context"
+    created = _create_project(c, folder, name="FinishAIContext")
+    project_id = created["id"]
+
+    session_resp = c.post(f"/api/projects/{project_id}/sessions", json={"name": "完整上下文会话"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+
+    import backend.main as main  # noqa: WPS433
+
+    finish_prompts: list[str] = []
+
+    def fake_query_llm(*, api_config, prompt, stage, **kwargs):
+        if stage == "clarify":
+            return "需求已清晰，无需继续提问。"
+        if stage in {"final_doc", "finish_final_doc"}:
+            if stage == "finish_final_doc":
+                finish_prompts.append(prompt)
+            return (
+                "# 项目功能清单\n\n"
+                "- 自动生成开发文档\n\n"
+                "# 项目细节\n\n"
+                "- 需要保留会话上下文\n\n"
+                "# 代码架构与实现方式\n\n"
+                "- FastAPI\n"
+            )
+        return ""
+
+    monkeypatch.setattr(main.conversation_service, "_query_llm", fake_query_llm)
+
+    first_answer = c.post(
+        f"/api/projects/{project_id}/sessions/{session_id}/answer",
+        json={"selected_options": [], "text_input": "第一轮输入：需要自动生成文档", "skip_question": False},
+    )
+    assert first_answer.status_code == 200
+
+    second_answer = c.post(
+        f"/api/projects/{project_id}/sessions/{session_id}/answer",
+        json={"selected_options": [], "text_input": "第二轮输入：并保留同会话全部历史", "skip_question": False},
+    )
+    assert second_answer.status_code == 200
+
+    finish_resp = c.post(f"/api/projects/{project_id}/sessions/{session_id}/finish")
+    assert finish_resp.status_code == 200
+    finished = finish_resp.json()
+
+    assert finished["is_complete"] is True
+    assert finish_prompts
+
+    finish_prompt = finish_prompts[-1]
+    assert "第一轮输入：需要自动生成文档" in finish_prompt
+    assert "第二轮输入：并保留同会话全部历史" in finish_prompt

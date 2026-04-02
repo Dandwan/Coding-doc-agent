@@ -58,7 +58,7 @@ function bindStaticActions() {
     .addEventListener("click", withErrorHandling("跳过问题", async () => submitAnswer(true)));
   document
     .getElementById("finish-session")
-    .addEventListener("click", withErrorHandling("保存对话并生成开发文档", finishSession));
+    .addEventListener("click", withErrorHandling("保存对话并生成Agent开发文档", finishSession));
   document
     .getElementById("save-project-settings")
     .addEventListener("click", withErrorHandling("保存项目设置", saveProjectSettings));
@@ -390,8 +390,8 @@ async function finishSession() {
 
   const executed = await runWithGlobalStatus(
     {
-      startText: "正在保存对话并生成Agent 开发文档...",
-      successText: "保存完成，Agent 开发文档已更新。",
+      startText: "正在保存对话并生成Agent开发文档...",
+      successText: "保存完成，Agent开发文档已更新。",
       errorTextPrefix: "保存失败：",
       autoCap: 92,
     },
@@ -419,7 +419,7 @@ async function finishSession() {
   if (!executed) {
     return;
   }
-  showMessage("会话已保存，并已生成Agent 开发文档。", false);
+  showMessage("会话已保存，并已生成Agent开发文档。", false);
 }
 
 async function loadVersions() {

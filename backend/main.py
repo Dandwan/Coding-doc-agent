@@ -410,12 +410,10 @@ def answer(project_id: str, session_id: str, payload: AnswerRequest) -> dict:
     except SessionNotFoundError:
         raise HTTPException(status_code=404, detail="会话不存在") from None
 
-    project_sessions = manager.list_session_details()
     updated = conversation_service.process_answer(
         project,
         session,
         payload.model_dump(),
-        project_sessions=project_sessions,
     )
     if str(updated.get("current_document", "")).strip():
         version_name = _version_manager(project).save_version(updated.get("current_document", ""))
@@ -445,13 +443,15 @@ def finish_session(project_id: str, session_id: str) -> dict:
     except SessionNotFoundError:
         raise HTTPException(status_code=404, detail="会话不存在") from None
 
-    finished = conversation_service.finish_session(session)
+    finished = conversation_service.finish_session(project, session)
     if str(finished.get("current_document", "")).strip():
         version_name = _version_manager(project).save_version(finished.get("current_document", ""))
         finished["current_version"] = version_name
 
     saved = manager.save_session(session_id, finished)
     system_logger.info("session_finished project_id=%s session_id=%s", project_id, session_id)
+    if str(saved.get("last_error", "")).strip():
+        raise HTTPException(status_code=502, detail=f"AI 调用失败: {saved['last_error']}")
     return saved
 
 
